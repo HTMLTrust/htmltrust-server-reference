@@ -3,6 +3,9 @@
   "dockerComposeFile": "docker-compose.yml",
   "service": "app",
   "workspaceFolder": "/workspaces/htmltrust-server-reference",
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
   "postCreateCommand": "npm install",
   "forwardPorts": [3000, 27017],
   "customizations": {
