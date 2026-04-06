@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Content Signing System</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body {
+      padding-top: 2rem;
+      padding-bottom: 2rem;
+    }
+    .section {
+      margin-bottom: 2rem;
+      padding: 1.5rem;
+      border-radius: 0.5rem;
+      background-color: #f8f9fa;
+    }
+    .result-container {
+      margin-top: 1rem;
+      padding: 1rem;
+      border-radius: 0.25rem;
+      background-color: #e9ecef;
+      min-height: 100px;
+      max-height: 300px;
+      overflow-y: auto;
+      font-family: monospace;
+    }
+    .nav-tabs {
+      margin-bottom: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1 class="text-center mb-4">Content Signing System</h1>
+    
+    <ul class="nav nav-tabs" id="myTab" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="authors-tab" data-bs-toggle="tab" data-bs-target="#authors" type="button" role="tab" aria-controls="authors" aria-selected="true">Authors</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="content-tab" data-bs-toggle="tab" data-bs-target="#content" type="button" role="tab" aria-controls="content" aria-selected="false">Content</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="directory-tab" data-bs-toggle="tab" data-bs-target="#directory" type="button" role="tab" aria-controls="directory" aria-selected="false">Directory</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="votes-tab" data-bs-toggle="tab" data-bs-target="#votes" type="button" role="tab" aria-controls="votes" aria-selected="false">Votes</button>
+      </li>
+    </ul>
+    
+    <div class="tab-content" id="myTabContent">
+      <!-- Authors Tab -->
+      <div class="tab-pane fade show active" id="authors" role="tabpanel" aria-labelledby="authors-tab">
+        <div class="section">
+          <h3>Create Author</h3>
+          <form id="create-author-form">
+            <div class="mb-3">
+              <label for="author-name" class="form-label">Name</label>
+              <input type="text" class="form-control" id="author-name" required>
+            </div>
+            <div class="mb-3">
+              <label for="author-description" class="form-label">Description</label>
+              <textarea class="form-control" id="author-description"></textarea>
+            </div>
+            <div class="mb-3">
+              <label for="author-url" class="form-label">URL</label>
+              <input type="url" class="form-control" id="author-url">
+            </div>
+            <div class="mb-3">
+              <label for="author-key-type" class="form-label">Key Type</label>
+              <select class="form-control" id="author-key-type" required>
+                <option value="HUMAN">Human</option>
+                <option value="AI">AI</option>
+                <option value="HUMAN_AI_MIX">Human-AI Mix</option>
+                <option value="ORGANIZATION">Organization</option>
+              </select>
+            </div>
+            <div class="mb-3">
+              <label for="author-key-algorithm" class="form-label">Key Algorithm</label>
+              <select class="form-control" id="author-key-algorithm">
+                <option value="RSA">RSA</option>
+                <option value="ECDSA">ECDSA</option>
+                <option value="ED25519">ED25519</option>
+              </select>
+            </div>
+            <div class="mb-3">
+              <label for="general-api-key" class="form-label">General API Key</label>
+              <input type="text" class="form-control" id="general-api-key" value="general_api_key_example_123">
+            </div>
+            <button type="submit" class="btn btn-primary">Create Author</button>
+          </form>
+          <div class="result-container" id="create-author-result"></div>
+        </div>
+        
+        <div class="section">
+          <h3>Get Authors</h3>
+          <form id="get-authors-form">
+            <div class="mb-3">
+              <label for="authors-name-filter" class="form-label">Name Filter</label>
+              <input type="text" class="form-control" id="authors-name-filter">
+            </div>
+            <div class="mb-3">
+              <label for="authors-key-type-filter" class="form-label">Key Type Filter</label>
+              <select class="form-control" id="authors-key-type-filter">
+                <option value="">All</option>
+                <option value="HUMAN">Human</option>
+                <option value="AI">AI</option>
+                <option value="HUMAN_AI_MIX">Human-AI Mix</option>
+                <option value="ORGANIZATION">Organization</option>
+              </select>
+            </div>
+            <div class="mb-3">
+              <label for="authors-api-key" class="form-label">General API Key</label>
+              <input type="text" class="form-control" id="authors-api-key" value="general_api_key_example_123">
+            </div>
+            <button type="submit" class="btn btn-primary">Get Authors</button>
+          </form>
+          <div class="result-container" id="get-authors-result"></div>
+        </div>
+      </div>
+      
+      <!-- Content Tab -->
+      <div class="tab-pane fade" id="content" role="tabpanel" aria-labelledby="content-tab">
+        <div class="section">
+          <h3>Sign Content</h3>
+          <form id="sign-content-form">
+            <div class="mb-3">
+              <label for="content-text" class="form-label">Content</label>
+              <textarea class="form-control" id="content-text" rows="4" required></textarea>
+            </div>
+            <div class="mb-3">
+              <label for="content-domain" class="form-label">Domain</label>
+              <input type="text" class="form-control" id="content-domain" value="example.com" required>
+            </div>
+            <div class="mb-3">
+              <label for="content-claims" class="form-label">Claims (JSON)</label>
+              <textarea class="form-control" id="content-claims" rows="3">{"ContentType": "Article", "License": "CC-BY-4.0"}</textarea>
+            </div>
+            <div class="mb-3">
+              <label for="author-id" class="form-label">Author ID</label>
+              <input type="text" class="form-control" id="author-id" required>
+            </div>
+            <div class="mb-3">
+              <label for="author-api-key" class="form-label">Author API Key</label>
+              <input type="text" class="form-control" id="author-api-key" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Sign Content</button>
+          </form>
+          <div class="result-container" id="sign-content-result"></div>
+        </div>
+        
+        <div class="section">
+          <h3>Verify Content</h3>
+          <form id="verify-content-form">
+            <div class="mb-3">
+              <label for="verify-content-hash" class="form-label">Content Hash</label>
+              <input type="text" class="form-control" id="verify-content-hash" required>
+            </div>
+            <div class="mb-3">
+              <label for="verify-domain" class="form-label">Domain</label>
+              <input type="text" class="form-control" id="verify-domain" value="example.com" required>
+            </div>
+            <div class="mb-3">
+              <label for="verify-author-id" class="form-label">Author ID</label>
+              <input type="text" class="form-control" id="verify-author-id" required>
+            </div>
+            <div class="mb-3">
+              <label for="verify-signature" class="form-label">Signature</label>
+              <input type="text" class="form-control" id="verify-signature" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Verify Content</button>
+          </form>
+          <div class="result-container" id="verify-content-result"></div>
+        </div>
+      </div>
+      
+      <!-- Directory Tab -->
+      <div class="tab-pane fade" id="directory" role="tabpanel" aria-labelledby="directory-tab">
+        <div class="section">
+          <h3>Search Public Keys</h3>
+          <form id="search-keys-form">
+            <div class="mb-3">
+              <label for="keys-author-name" class="form-label">Author Name</label>
+              <input type="text" class="form-control" id="keys-author-name">
+            </div>
+            <div class="mb-3">
+              <label for="keys-key-type" class="form-label">Key Type</label>
+              <select class="form-control" id="keys-key-type">
+                <option value="">All</option>
+                <option value="HUMAN">Human</option>
+                <option value="AI">AI</option>
+                <option value="HUMAN_AI_MIX">Human-AI Mix</option>
+                <option value="ORGANIZATION">Organization</option>
+              </select>
+            </div>
+            <div class="mb-3">
+              <label for="keys-min-trust-score" class="form-label">Minimum Trust Score</label>
+              <input type="number" class="form-control" id="keys-min-trust-score" min="0" max="1" step="0.1">
+            </div>
+            <button type="submit" class="btn btn-primary">Search Keys</button>
+          </form>
+          <div class="result-container" id="search-keys-result"></div>
+        </div>
+        
+        <div class="section">
+          <h3>Search Signed Content</h3>
+          <form id="search-content-form">
+            <div class="mb-3">
+              <label for="content-hash" class="form-label">Content Hash</label>
+              <input type="text" class="form-control" id="content-hash">
+            </div>
+            <div class="mb-3">
+              <label for="content-author-id" class="form-label">Author ID</label>
+              <input type="text" class="form-control" id="content-author-id">
+            </div>
+            <div class="mb-3">
+              <label for="content-domain-filter" class="form-label">Domain</label>
+              <input type="text" class="form-control" id="content-domain-filter">
+            </div>
+            <button type="submit" class="btn btn-primary">Search Content</button>
+          </form>
+          <div class="result-container" id="search-content-result"></div>
+        </div>
+      </div>
+      
+      <!-- Votes Tab -->
+      <div class="tab-pane fade" id="votes" role="tabpanel" aria-labelledby="votes-tab">
+        <div class="section">
+          <h3>Vote on Author or Content</h3>
+          <form id="create-vote-form">
+            <div class="mb-3">
+              <label for="vote-user-id" class="form-label">User ID</label>
+              <input type="text" class="form-control" id="vote-user-id" value="user123" required>
+            </div>
+            <div class="mb-3">
+              <label for="vote-target-type" class="form-label">Target Type</label>
+              <select class="form-control" id="vote-target-type" required>
+                <option value="AUTHOR">Author</option>
+                <option value="CONTENT">Content</option>
+              </select>
+            </div>
+            <div class="mb-3">
+              <label for="vote-target-id" class="form-label">Target ID</label>
+              <input type="text" class="form-control" id="vote-target-id" required>
+            </div>
+            <div class="mb-3">
+              <label for="vote-type" class="form-label">Vote Type</label>
+              <select class="form-control" id="vote-type" required>
+                <option value="TRUST">Trust</option>
+                <option value="DISTRUST">Distrust</option>
+              </select>
+            </div>
+            <div class="mb-3">
+              <label for="vote-reason" class="form-label">Reason</label>
+              <textarea class="form-control" id="vote-reason"></textarea>
+            </div>
+            <div class="mb-3">
+              <label for="vote-api-key" class="form-label">General API Key</label>
+              <input type="text" class="form-control" id="vote-api-key" value="general_api_key_example_123">
+            </div>
+            <button type="submit" class="btn btn-primary">Submit Vote</button>
+          </form>
+          <div class="result-container" id="create-vote-result"></div>
+        </div>
+        
+        <div class="section">
+          <h3>Get Vote Statistics</h3>
+          <form id="vote-stats-form">
+            <div class="mb-3">
+              <label for="stats-target-type" class="form-label">Target Type</label>
+              <select class="form-control" id="stats-target-type" required>
+                <option value="AUTHOR">Author</option>
+                <option value="CONTENT">Content</option>
+              </select>
+            </div>
+            <div class="mb-3">
+              <label for="stats-target-id" class="form-label">Target ID</label>
+              <input type="text" class="form-control" id="stats-target-id" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Get Statistics</button>
+          </form>
+          <div class="result-container" id="vote-stats-result"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/crypto-js@4.1.1/crypto-js.min.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

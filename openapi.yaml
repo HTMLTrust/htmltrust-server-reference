@@ -1,0 +1,1211 @@
+openapi: 3.1.0
+info:
+  title: HTMLTrust Directory API
+  description: |
+    Reference implementation of the HTMLTrust trust directory API. Provides endpoints
+    for author management, content signing and verification, claims, and a federated
+    trust directory with reputation tracking.
+  version: 1.0.0
+  contact:
+    name: HTMLTrust
+    url: https://github.com/ArcadeLabsInc/htmltrust-server-reference
+    email: jason@jason-grey.com
+
+servers:
+  - url: https://api.contentsigning.example.com/v1
+    description: Production server
+  - url: https://api.staging.contentsigning.example.com/v1
+    description: Staging server
+
+tags:
+  - name: Authors
+    description: Operations related to author management and key pairs
+  - name: Content
+    description: Operations for signing and verifying content
+  - name: Claims
+    description: Operations for managing claim types and assertions
+  - name: Directory
+    description: Operations for the Network of Trust directory services
+
+security:
+  - {} # No default security
+
+components:
+  securitySchemes:
+    AuthorApiKey:
+      type: apiKey
+      in: header
+      name: X-AUTHOR-API-KEY
+      description: API key linked to a specific author for author-specific operations
+
+    GeneralApiKey:
+      type: apiKey
+      in: header
+      name: X-API-KEY
+      description: General API key for authenticated operations
+
+    AdminApiKey:
+      type: apiKey
+      in: header
+      name: X-ADMIN-API-KEY
+      description: Admin-level API key for administrative operations
+
+  schemas:
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: Error code
+        message:
+          type: string
+          description: Error message
+        details:
+          type: object
+          description: Additional error details
+      example:
+        code: "UNAUTHORIZED"
+        message: "Invalid API key"
+
+    Author:
+      type: object
+      required:
+        - id
+        - name
+        - keyType
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique identifier for the author
+        name:
+          type: string
+          description: Name of the author
+        description:
+          type: string
+          description: Description of the author
+        url:
+          type: string
+          format: uri
+          description: URL associated with the author
+        keyType:
+          type: string
+          enum: [HUMAN, AI, HUMAN_AI_MIX, ORGANIZATION]
+          description: Type of the author key
+        createdAt:
+          type: string
+          format: date-time
+          description: Creation timestamp
+        updatedAt:
+          type: string
+          format: date-time
+          description: Last update timestamp
+      example:
+        id: "123e4567-e89b-12d3-a456-426614174000"
+        name: "John Doe"
+        description: "Technology writer and researcher"
+        url: "https://johndoe.example.com"
+        keyType: "HUMAN"
+        createdAt: "2023-01-01T12:00:00Z"
+        updatedAt: "2023-01-01T12:00:00Z"
+
+    PublicKey:
+      type: object
+      required:
+        - id
+        - authorId
+        - key
+        - algorithm
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique identifier for the public key
+        authorId:
+          type: string
+          format: uuid
+          description: ID of the author this key belongs to
+        key:
+          type: string
+          description: The public key in PEM format
+        algorithm:
+          type: string
+          description: The cryptographic algorithm used
+          enum: [RSA, ECDSA, ED25519]
+        createdAt:
+          type: string
+          format: date-time
+          description: Creation timestamp
+        expiresAt:
+          type: string
+          format: date-time
+          description: Expiration timestamp (if applicable)
+      example:
+        id: "123e4567-e89b-12d3-a456-426614174001"
+        authorId: "123e4567-e89b-12d3-a456-426614174000"
+        key: "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...\n-----END PUBLIC KEY-----"
+        algorithm: "RSA"
+        createdAt: "2023-01-01T12:00:00Z"
+        expiresAt: "2024-01-01T12:00:00Z"
+
+    Claim:
+      type: object
+      required:
+        - id
+        - name
+        - description
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique identifier for the claim type
+        name:
+          type: string
+          description: Name of the claim type
+        description:
+          type: string
+          description: Description of what this claim type represents
+        possibleValues:
+          type: array
+          description: Possible values for this claim type (if applicable)
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+          description: Creation timestamp
+        updatedAt:
+          type: string
+          format: date-time
+          description: Last update timestamp
+      example:
+        id: "123e4567-e89b-12d3-a456-426614174002"
+        name: "ContentType"
+        description: "The type of content being signed"
+        possibleValues: ["Article", "Image", "Video", "Audio", "Dataset"]
+        createdAt: "2023-01-01T12:00:00Z"
+        updatedAt: "2023-01-01T12:00:00Z"
+
+    ContentSignature:
+      type: object
+      required:
+        - contentHash
+        - domain
+        - authorId
+        - signature
+        - claims
+      properties:
+        contentHash:
+          type: string
+          description: Hash of the normalized content
+        domain:
+          type: string
+          description: Domain associated with the content
+        authorId:
+          type: string
+          format: uuid
+          description: ID of the author who signed the content
+        signature:
+          type: string
+          description: Cryptographic signature binding content, hash, domain, and author key
+        claims:
+          type: object
+          description: Claims about the content
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+          description: Creation timestamp
+      example:
+        contentHash: "sha256:a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e"
+        domain: "example.com"
+        authorId: "123e4567-e89b-12d3-a456-426614174000"
+        signature: "MEUCIQD7y5SxmQJ9f0lE9B0BwqIJKKdL5fZMNQOiPnKWUJfmrgIgEbHtPwDxM9xGbCZzW9k2R9jFxwJZQQlPfhgj+0YP7vQ="
+        claims:
+          ContentType: "Article"
+          License: "CC-BY-4.0"
+          AIAssistance: "Minimal"
+        createdAt: "2023-01-01T12:00:00Z"
+
+    KeyReputation:
+      type: object
+      required:
+        - keyId
+        - trustScore
+        - verifiedSignatures
+      properties:
+        keyId:
+          type: string
+          format: uuid
+          description: ID of the public key
+        trustScore:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: Trust score between 0 and 1
+        verifiedSignatures:
+          type: integer
+          description: Number of verified signatures using this key
+        reports:
+          type: integer
+          description: Number of reports against this key
+        lastUpdated:
+          type: string
+          format: date-time
+          description: Last update timestamp
+      example:
+        keyId: "123e4567-e89b-12d3-a456-426614174001"
+        trustScore: 0.95
+        verifiedSignatures: 1250
+        reports: 2
+        lastUpdated: "2023-01-01T12:00:00Z"
+
+    ContentOccurrence:
+      type: object
+      required:
+        - url
+        - domain
+        - firstSeen
+      properties:
+        url:
+          type: string
+          format: uri
+          description: URL where the content was found
+        domain:
+          type: string
+          description: Domain where the content was found
+        firstSeen:
+          type: string
+          format: date-time
+          description: When the content was first seen at this location
+        lastSeen:
+          type: string
+          format: date-time
+          description: When the content was last seen at this location
+        authorId:
+          type: string
+          format: uuid
+          description: ID of the author who signed the content at this location (if any)
+        signatureValid:
+          type: boolean
+          description: Whether the signature at this location is valid
+      example:
+        url: "https://example.com/article/123"
+        domain: "example.com"
+        firstSeen: "2023-01-01T12:00:00Z"
+        lastSeen: "2023-01-02T12:00:00Z"
+        authorId: "123e4567-e89b-12d3-a456-426614174000"
+        signatureValid: true
+
+paths:
+  /authors:
+    post:
+      tags:
+        - Authors
+      summary: Create a new author and key pair
+      description: Creates a new author profile and generates a key pair. The private key is stored securely and never exposed.
+      operationId: createAuthor
+      security:
+        - GeneralApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - keyType
+              properties:
+                name:
+                  type: string
+                  description: Name of the author
+                description:
+                  type: string
+                  description: Description of the author
+                url:
+                  type: string
+                  format: uri
+                  description: URL associated with the author
+                keyType:
+                  type: string
+                  enum: [HUMAN, AI, HUMAN_AI_MIX, ORGANIZATION]
+                  description: Type of the author key
+                keyAlgorithm:
+                  type: string
+                  enum: [RSA, ECDSA, ED25519]
+                  default: RSA
+                  description: The cryptographic algorithm to use for the key pair
+      responses:
+        "201":
+          description: Author created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  author:
+                    $ref: "#/components/schemas/Author"
+                  authorApiKey:
+                    type: string
+                    description: API key for author-specific operations (only returned once at creation)
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    get:
+      tags:
+        - Authors
+      summary: List authors
+      description: Returns a list of authors with optional filtering
+      operationId: listAuthors
+      security:
+        - GeneralApiKey: []
+      parameters:
+        - name: name
+          in: query
+          description: Filter by author name
+          schema:
+            type: string
+        - name: keyType
+          in: query
+          description: Filter by key type
+          schema:
+            type: string
+            enum: [HUMAN, AI, HUMAN_AI_MIX, ORGANIZATION]
+        - name: page
+          in: query
+          description: Page number
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          description: Number of items per page
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+      responses:
+        "200":
+          description: List of authors
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authors:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Author"
+                  pagination:
+                    type: object
+                    properties:
+                      total:
+                        type: integer
+                      pages:
+                        type: integer
+                      page:
+                        type: integer
+                      limit:
+                        type: integer
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /authors/{authorId}:
+    get:
+      tags:
+        - Authors
+      summary: Get author details
+      description: Returns details about a specific author
+      operationId: getAuthor
+      parameters:
+        - name: authorId
+          in: path
+          required: true
+          description: ID of the author
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Author details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Author"
+        "404":
+          description: Author not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    put:
+      tags:
+        - Authors
+      summary: Update author details
+      description: Updates details for a specific author
+      operationId: updateAuthor
+      security:
+        - AuthorApiKey: []
+      parameters:
+        - name: authorId
+          in: path
+          required: true
+          description: ID of the author
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: Name of the author
+                description:
+                  type: string
+                  description: Description of the author
+                url:
+                  type: string
+                  format: uri
+                  description: URL associated with the author
+      responses:
+        "200":
+          description: Author updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Author"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Forbidden - API key does not match author
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Author not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    delete:
+      tags:
+        - Authors
+      summary: Delete an author
+      description: Deletes an author and associated keys
+      operationId: deleteAuthor
+      security:
+        - AuthorApiKey: []
+      parameters:
+        - name: authorId
+          in: path
+          required: true
+          description: ID of the author
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Author deleted successfully
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Forbidden - API key does not match author
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Author not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /authors/{authorId}/public-key:
+    get:
+      tags:
+        - Authors
+      summary: Get author's public key
+      description: Returns the public key for a specific author
+      operationId: getAuthorPublicKey
+      parameters:
+        - name: authorId
+          in: path
+          required: true
+          description: ID of the author
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Author's public key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicKey"
+        "404":
+          description: Author or public key not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /content/sign:
+    post:
+      tags:
+        - Content
+      summary: Sign content
+      description: Signs content with the author's private key
+      operationId: signContent
+      security:
+        - AuthorApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - contentHash
+                - domain
+                - claims
+              properties:
+                contentHash:
+                  type: string
+                  description: Hash of the normalized content
+                domain:
+                  type: string
+                  description: Domain associated with the content
+                claims:
+                  type: object
+                  description: Claims about the content
+                  additionalProperties: true
+      responses:
+        "201":
+          description: Content signed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentSignature"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /content/verify:
+    post:
+      tags:
+        - Content
+      summary: Verify content signature
+      description: Verifies the signature of content
+      operationId: verifyContent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - contentHash
+                - domain
+                - authorId
+                - signature
+              properties:
+                contentHash:
+                  type: string
+                  description: Hash of the normalized content
+                domain:
+                  type: string
+                  description: Domain associated with the content
+                authorId:
+                  type: string
+                  format: uuid
+                  description: ID of the author who signed the content
+                signature:
+                  type: string
+                  description: Cryptographic signature to verify
+      responses:
+        "200":
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - valid
+                properties:
+                  valid:
+                    type: boolean
+                    description: Whether the signature is valid
+                  author:
+                    $ref: "#/components/schemas/Author"
+                  claims:
+                    type: object
+                    description: Claims included in the signature
+                    additionalProperties: true
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /claims:
+    post:
+      tags:
+        - Claims
+      summary: Create a new claim type
+      description: Creates a new claim type definition
+      operationId: createClaimType
+      security:
+        - AdminApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - description
+              properties:
+                name:
+                  type: string
+                  description: Name of the claim type
+                description:
+                  type: string
+                  description: Description of what this claim type represents
+                possibleValues:
+                  type: array
+                  description: Possible values for this claim type (if applicable)
+                  items:
+                    type: string
+      responses:
+        "201":
+          description: Claim type created successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Claim"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    get:
+      tags:
+        - Claims
+      summary: List claim types
+      description: Returns a list of claim types
+      operationId: listClaimTypes
+      parameters:
+        - name: page
+          in: query
+          description: Page number
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          description: Number of items per page
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+      responses:
+        "200":
+          description: List of claim types
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  claims:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Claim"
+                  pagination:
+                    type: object
+                    properties:
+                      total:
+                        type: integer
+                      pages:
+                        type: integer
+                      page:
+                        type: integer
+                      limit:
+                        type: integer
+
+  /claims/{claimId}:
+    get:
+      tags:
+        - Claims
+      summary: Get claim type details
+      description: Returns details about a specific claim type
+      operationId: getClaimType
+      parameters:
+        - name: claimId
+          in: path
+          required: true
+          description: ID of the claim type
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Claim type details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Claim"
+        "404":
+          description: Claim type not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /directory/keys:
+    get:
+      tags:
+        - Directory
+      summary: Search public keys
+      description: Searches for public keys in the directory
+      operationId: searchPublicKeys
+      parameters:
+        - name: authorName
+          in: query
+          description: Filter by author name
+          schema:
+            type: string
+        - name: keyType
+          in: query
+          description: Filter by key type
+          schema:
+            type: string
+            enum: [HUMAN, AI, HUMAN_AI_MIX, ORGANIZATION]
+        - name: domain
+          in: query
+          description: Filter by domain associated with the author
+          schema:
+            type: string
+        - name: minTrustScore
+          in: query
+          description: Minimum trust score
+          schema:
+            type: number
+            format: float
+            minimum: 0
+            maximum: 1
+        - name: page
+          in: query
+          description: Page number
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          description: Number of items per page
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+      responses:
+        "200":
+          description: List of public keys
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: "#/components/schemas/PublicKey"
+                        - type: object
+                          properties:
+                            author:
+                              $ref: "#/components/schemas/Author"
+                            trustScore:
+                              type: number
+                              format: float
+                  pagination:
+                    type: object
+                    properties:
+                      total:
+                        type: integer
+                      pages:
+                        type: integer
+                      page:
+                        type: integer
+                      limit:
+                        type: integer
+
+  /directory/keys/{keyId}/reputation:
+    get:
+      tags:
+        - Directory
+      summary: Get key reputation
+      description: Returns reputation information for a specific key
+      operationId: getKeyReputation
+      parameters:
+        - name: keyId
+          in: path
+          required: true
+          description: ID of the public key
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Key reputation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KeyReputation"
+        "404":
+          description: Key not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /directory/keys/{keyId}/report:
+    post:
+      tags:
+        - Directory
+      summary: Report a key
+      description: Reports a key for suspicious or malicious activity
+      operationId: reportKey
+      security:
+        - GeneralApiKey: []
+      parameters:
+        - name: keyId
+          in: path
+          required: true
+          description: ID of the public key
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reason
+              properties:
+                reason:
+                  type: string
+                  enum: [IMPERSONATION, MISINFORMATION, SPAM, OTHER]
+                  description: Reason for reporting
+                details:
+                  type: string
+                  description: Additional details about the report
+                evidence:
+                  type: string
+                  format: uri
+                  description: URL to evidence supporting the report
+      responses:
+        "201":
+          description: Report submitted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reportId:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [PENDING, UNDER_REVIEW, ACCEPTED, REJECTED]
+                    default: PENDING
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Key not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /directory/content:
+    get:
+      tags:
+        - Directory
+      summary: Search signed content
+      description: Searches for signed content in the directory
+      operationId: searchSignedContent
+      parameters:
+        - name: contentHash
+          in: query
+          description: Filter by content hash
+          schema:
+            type: string
+        - name: authorId
+          in: query
+          description: Filter by author ID
+          schema:
+            type: string
+            format: uuid
+        - name: domain
+          in: query
+          description: Filter by domain
+          schema:
+            type: string
+        - name: claim
+          in: query
+          description: "Filter by claim (format: claimName:claimValue)"
+          schema:
+            type: string
+        - name: page
+          in: query
+          description: Page number
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          description: Number of items per page
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+      responses:
+        "200":
+          description: List of signed content
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  signatures:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: "#/components/schemas/ContentSignature"
+                        - type: object
+                          properties:
+                            author:
+                              $ref: "#/components/schemas/Author"
+                            occurrences:
+                              type: integer
+                              description: Number of occurrences of this content
+                  pagination:
+                    type: object
+                    properties:
+                      total:
+                        type: integer
+                      pages:
+                        type: integer
+                      page:
+                        type: integer
+                      limit:
+                        type: integer
+
+  /directory/content/{contentHash}/occurrences:
+    get:
+      tags:
+        - Directory
+      summary: Find content occurrences
+      description: Returns occurrences of a specific content hash across domains
+      operationId: findContentOccurrences
+      parameters:
+        - name: contentHash
+          in: path
+          required: true
+          description: Hash of the content
+          schema:
+            type: string
+        - name: page
+          in: query
+          description: Page number
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          description: Number of items per page
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+      responses:
+        "200":
+          description: List of content occurrences
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  occurrences:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ContentOccurrence"
+                  pagination:
+                    type: object
+                    properties:
+                      total:
+                        type: integer
+                      pages:
+                        type: integer
+                      page:
+                        type: integer
+                      limit:
+                        type: integer
+        "404":
+          description: Content hash not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /directory/content/report:
+    post:
+      tags:
+        - Directory
+      summary: Report content misuse
+      description: Reports content for misuse, theft, or other issues
+      operationId: reportContentMisuse
+      security:
+        - GeneralApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - contentHash
+                - sourceUrl
+                - targetUrl
+                - reason
+              properties:
+                contentHash:
+                  type: string
+                  description: Hash of the content being reported
+                sourceUrl:
+                  type: string
+                  format: uri
+                  description: Original source URL of the content
+                targetUrl:
+                  type: string
+                  format: uri
+                  description: URL where the content is being misused
+                reason:
+                  type: string
+                  enum:
+                    [
+                      COPYRIGHT_VIOLATION,
+                      UNAUTHORIZED_USE,
+                      IMPERSONATION,
+                      OTHER,
+                    ]
+                  description: Reason for reporting
+                details:
+                  type: string
+                  description: Additional details about the report
+      responses:
+        "201":
+          description: Report submitted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reportId:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [PENDING, UNDER_REVIEW, ACCEPTED, REJECTED]
+                    default: PENDING
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Content hash not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
