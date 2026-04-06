@@ -127,12 +127,26 @@ const verifySignature = (data, signature, publicKey, algorithm = "RSA") => {
 };
 
 /**
- * Hash content using SHA-256
- * @param {string} content - The content to hash
- * @returns {string} - The hash
+ * Lazily loaded normalizeText from @htmltrust/canonicalization (ESM module)
  */
-const hashContent = (content) => {
-  return crypto.createHash("sha256").update(content).digest("hex");
+let _normalizeText;
+const getNormalizeText = async () => {
+  if (!_normalizeText) {
+    const mod = await import("@htmltrust/canonicalization");
+    _normalizeText = mod.normalizeText;
+  }
+  return _normalizeText;
+};
+
+/**
+ * Hash content using SHA-256, applying canonical normalization first
+ * @param {string} content - The content to hash
+ * @returns {Promise<string>} - The hash
+ */
+const hashContent = async (content) => {
+  const normalizeText = await getNormalizeText();
+  const normalized = normalizeText(content);
+  return crypto.createHash("sha256").update(normalized).digest("hex");
 };
 
 /**
