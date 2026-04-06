@@ -1,0 +1,16 @@
+{
+  "name": "HTMLTrust Server Reference",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspaces/htmltrust-server-reference",
+  "postCreateCommand": "npm install",
+  "forwardPorts": [3000, 27017],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "mongodb.mongodb-vscode"
+      ]
+    }
+  }
+}

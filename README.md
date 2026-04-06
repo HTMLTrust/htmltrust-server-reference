@@ -1,2 +1,123 @@
-# htmltrust-server-reference
-Server side reference
+# HTMLTrust Server Reference
+
+Reference implementation of the HTMLTrust trust directory API — a server that manages author identities, cryptographic key pairs, content signing/verification, and a federated trust directory with reputation tracking.
+
+This is a companion to the [HTMLTrust specification](https://github.com/ArcadeLabsInc/htmltrust-spec).
+
+## What It Does
+
+This server implements the **Trust Directory** component of the HTMLTrust system:
+
+- **Author Management** — Create and manage author profiles with cryptographic key pairs
+- **Content Signing** — Sign content hashes with author private keys, producing verifiable signatures
+- **Content Verification** — Verify that content signatures are authentic and untampered
+- **Trust Directory** — Search for public keys, track content occurrences across domains, and manage reputation
+- **Voting & Reputation** — Community-driven trust/distrust system for authors and content
+- **Claims** — Extensible metadata system for content categorization (authorship type, license, AI involvement, etc.)
+
+## Tech Stack
+
+- **Node.js** + **Express 5**
+- **MongoDB** via **Mongoose**
+- **Node.js `crypto`** for key generation, signing, and verification (RSA, ECDSA, Ed25519)
+
+## Quick Start
+
+### Prerequisites
+
+- Node.js 18+
+- MongoDB (local or remote)
+
+### Setup
+
+```sh
+git clone https://github.com/ArcadeLabsInc/htmltrust-server-reference.git
+cd htmltrust-server-reference
+cp .env.example .env    # Edit with your values
+npm install
+npm run dev             # Starts with nodemon (auto-reload)
+```
+
+The server starts at `http://localhost:3000`. A demo web UI is available at the root URL.
+
+### Environment Variables
+
+See `.env.example` for all options. At minimum you need:
+
+| Variable | Description |
+|---|---|
+| `MONGO_URI` | MongoDB connection string |
+| `GENERAL_API_KEY` | API key for general authenticated operations |
+| `ADMIN_API_KEY` | API key for admin operations (e.g., defining claim types) |
+
+## API Overview
+
+Full API documentation is in [`openapi.yaml`](openapi.yaml). Key endpoint groups:
+
+| Path | Description | Auth |
+|---|---|---|
+| `POST /api/authors` | Create author + key pair | General API key |
+| `GET /api/authors/:id/public-key` | Get author's public key | Public |
+| `POST /api/content/sign` | Sign a content hash | Author API key |
+| `POST /api/content/verify` | Verify a signature | Public |
+| `GET /api/directory/keys` | Search public keys | Public |
+| `GET /api/directory/content` | Search signed content | Public |
+| `POST /api/votes` | Vote trust/distrust | General API key |
+
+### Authentication
+
+Three tiers of API key auth via headers:
+
+| Header | Purpose |
+|---|---|
+| `X-API-KEY` | General operations (creating authors, voting, reporting) |
+| `X-AUTHOR-API-KEY` | Author-specific operations (signing, updating own profile) |
+| `X-ADMIN-API-KEY` | Admin operations (managing claim types) |
+
+## Project Structure
+
+```
+src/
+├── server.js              # Express app entry point
+├── config/
+│   └── db.js              # MongoDB connection
+├── controllers/           # Route handlers
+│   ├── authorController.js
+│   ├── claimController.js
+│   ├── contentController.js
+│   ├── directoryController.js
+│   └── voteController.js
+├── middleware/
+│   └── auth.js            # API key authentication
+├── models/                # Mongoose schemas
+│   ├── Author.js
+│   ├── Claim.js
+│   ├── ContentOccurrence.js
+│   ├── ContentSignature.js
+│   ├── Key.js
+│   └── Vote.js
+├── public/                # Demo web UI
+│   ├── index.html
+│   └── js/main.js
+├── routes/                # Express route definitions
+│   ├── authors.js
+│   ├── claims.js
+│   ├── content.js
+│   ├── directory.js
+│   └── votes.js
+└── utils/
+    └── crypto.js          # Key generation, signing, verification
+```
+
+## Companion Repositories
+
+| Repository | Description |
+|---|---|
+| [htmltrust-spec](https://github.com/ArcadeLabsInc/htmltrust-spec) | The HTMLTrust specification and paper |
+| [htmltrust-browser-reference](https://github.com/ArcadeLabsInc/htmltrust-browser-reference) | Reference browser extension for signature validation |
+| [htmltrust-cms-reference](https://github.com/ArcadeLabsInc/htmltrust-cms-reference) | Reference CMS plugin (WordPress) |
+| [htmltrust-website](https://github.com/ArcadeLabsInc/htmltrust-website) | Project website |
+
+## License
+
+MIT

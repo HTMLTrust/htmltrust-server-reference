@@ -1,0 +1,25 @@
+services:
+  app:
+    image: mcr.microsoft.com/devcontainers/javascript-node:22
+    volumes:
+      - ..:/workspaces/htmltrust-server-reference:cached
+    command: sleep infinity
+    depends_on:
+      - mongo
+    environment:
+      MONGO_URI: mongodb://mongo:27017/htmltrust
+      NODE_ENV: development
+      PORT: "3000"
+      GENERAL_API_KEY: dev_general_key
+      ADMIN_API_KEY: dev_admin_key
+
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    ports:
+      - "27017:27017"
+
+volumes:
+  mongo-data:
