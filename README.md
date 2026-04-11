@@ -1,8 +1,19 @@
-# HTMLTrust Server Reference
+# HTMLTrust Server Reference (Node.js)
 
 Reference implementation of the HTMLTrust trust directory API — a server that manages author identities, cryptographic key pairs, content signing/verification, and a federated trust directory with reputation tracking.
 
 This is a companion to the [HTMLTrust specification](https://github.com/ArcadeLabsInc/htmltrust-spec).
+
+## Personality: the "permissive community directory"
+
+The HTMLTrust protocol is federated, meaning multiple trust directories MAY coexist with different curatorial philosophies. This Node.js implementation is the baseline reference: full-featured, permissive, and neutral -- suitable for general-purpose deployment and as a canonical implementation of every endpoint in the OpenAPI spec.
+
+The sibling reference implementations demonstrate alternative curatorial philosophies using the same protocol:
+
+- **[`htmltrust-server-reference-python`](../htmltrust-server-reference-python/)** -- curated journalism directory. Admin-approval queue, Article/News scope, punitive reputation formula. Simulates EFF/ProPublica/Poynter-style deployments.
+- **[`htmltrust-server-reference-rust`](../htmltrust-server-reference-rust/)** -- rapid-flag public-safety directory. Time-decayed reputation, whitelisted-researcher fatal flagging, PostgreSQL backend. Simulates Internet Archive / security research collective deployments.
+
+All three conform to the same OpenAPI spec. Clients don't need per-directory logic -- they simply subscribe to one or more directories and weight the returned scores according to their own trust policy.
 
 ## What It Does
 
