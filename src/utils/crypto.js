@@ -139,14 +139,46 @@ const getNormalizeText = async () => {
 };
 
 /**
- * Hash content using SHA-256, applying canonical normalization first
+ * Hash content using SHA-256, applying canonical normalization first.
+ *
+ * Returns an unpadded Base64-encoded digest prefixed with the algorithm name,
+ * per HTMLTrust spec §2.1 "Hash and signature encoding". Example output:
+ *
+ *   "sha256:RAyBCvKTW5KNnGZSyXZYe+8V8DEEnUMRxjk5LSgCHo4"
+ *
+ * Callers MUST use the full prefixed form (including "sha256:") when
+ * storing or transmitting the hash.
+ *
  * @param {string} content - The content to hash
- * @returns {Promise<string>} - The hash
+ * @returns {Promise<string>} - The prefixed hash string
  */
 const hashContent = async (content) => {
   const normalizeText = await getNormalizeText();
   const normalized = normalizeText(content);
-  return crypto.createHash("sha256").update(normalized).digest("hex");
+  const digest = crypto
+    .createHash("sha256")
+    .update(normalized)
+    .digest("base64")
+    .replace(/=+$/, ""); // unpadded
+  return `sha256:${digest}`;
+};
+
+/**
+ * Hash an already-canonicalized string using SHA-256 with base64 encoding.
+ * Use this when the input is already the canonical serialization (e.g., a
+ * claims canonical string from canonicalizeClaims()); it skips the text
+ * normalization step.
+ *
+ * @param {string} canonical - Already-canonical string
+ * @returns {string} - Prefixed hash (e.g. "sha256:...")
+ */
+const hashCanonical = (canonical) => {
+  const digest = crypto
+    .createHash("sha256")
+    .update(canonical)
+    .digest("base64")
+    .replace(/=+$/, "");
+  return `sha256:${digest}`;
 };
 
 /**
@@ -162,5 +194,6 @@ module.exports = {
   signContent,
   verifySignature,
   hashContent,
+  hashCanonical,
   generateApiKey,
 };

@@ -26,6 +26,13 @@ tags:
     description: Operations for managing claim types and assertions
   - name: Directory
     description: Operations for the Network of Trust directory services
+  - name: Endorsements
+    description: |
+      Operations for storing and retrieving third-party endorsements per
+      HTMLTrust spec §2.5. Endorsements are standalone signed JSON blobs
+      that attest a third party's opinion about a specific content hash.
+      The directory is a passive store; verification is performed locally
+      by the client.
 
 security:
   - {} # No default security
@@ -302,6 +309,54 @@ components:
         lastSeen: "2023-01-02T12:00:00Z"
         authorId: "123e4567-e89b-12d3-a456-426614174000"
         signatureValid: true
+
+    Endorsement:
+      type: object
+      description: |
+        A standalone signed endorsement of a specific content hash, per
+        HTMLTrust spec §2.5. Verification is performed locally by the
+        client; the directory is a passive store.
+      required:
+        - endorser
+        - contentHash
+        - signature
+        - timestamp
+      properties:
+        _id:
+          type: string
+          description: Server-assigned identifier
+        endorser:
+          type: string
+          description: Opaque endorser keyid (e.g. "did:web:publisher.org")
+        contentHash:
+          type: string
+          description: The targeted content hash (e.g. "sha256:...")
+        signature:
+          type: string
+          description: Base64 signature over "{contentHash}:{timestamp}"
+        timestamp:
+          type: string
+          description: ISO-8601 timestamp at which the endorsement was issued
+        algorithm:
+          type: string
+          description: Signature algorithm (default ed25519)
+          default: ed25519
+        rawBlob:
+          type: string
+          description: |
+            The exact bytes that were signed. Clients SHOULD use this for
+            byte-identical re-verification.
+        createdAt:
+          type: string
+          format: date-time
+          description: When the endorsement was stored by this directory
+      example:
+        endorser: "did:web:publisher.org"
+        contentHash: "sha256:RAyBCvKTW5KNnGZSyXZYe+8V8DEEnUMRxjk5LSgCHo4"
+        signature: "BASE64_SIG"
+        timestamp: "2025-05-01T00:00:00Z"
+        algorithm: "ed25519"
+        rawBlob: "{\"endorser\":\"did:web:publisher.org\",\"endorsement\":\"sha256:RAyBCvKTW5KNnGZSyXZYe+8V8DEEnUMRxjk5LSgCHo4\",\"signature\":\"BASE64_SIG\",\"timestamp\":\"2025-05-01T00:00:00Z\"}"
 
 paths:
   /authors:
@@ -646,8 +701,14 @@ paths:
     post:
       tags:
         - Content
-      summary: Verify content signature
-      description: Verifies the signature of content
+      summary: Verify content signature (DEPRECATED)
+      description: |
+        DEPRECATED: cryptographic verification is a local operation per
+        HTMLTrust spec §3.1. This endpoint is retained as a low-trust
+        convenience and will be removed in a future major version. Clients
+        MUST verify signatures locally (e.g. via SubtleCrypto). Responses
+        include the `Deprecation: true` header per RFC 9745.
+      deprecated: true
       operationId: verifyContent
       requestBody:
         required: true
@@ -1205,6 +1266,142 @@ paths:
                 $ref: "#/components/schemas/Error"
         "404":
           description: Content hash not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /endorsements:
+    get:
+      tags:
+        - Endorsements
+      summary: List endorsements for a content hash
+      description: |
+        Returns all endorsements on file for a given content hash. The
+        directory is a passive store; clients MUST verify each endorsement's
+        signature locally using the endorser's public key (per spec §2.5)
+        before treating it as trustworthy. Unverified endorsements MUST NOT
+        contribute to any trust decision.
+      operationId: listEndorsements
+      parameters:
+        - name: content-hash
+          in: query
+          required: true
+          description: The content hash to look up endorsements for (e.g. "sha256:...")
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Array of endorsements
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Endorsement"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      tags:
+        - Endorsements
+      summary: Submit a signed endorsement for storage
+      description: |
+        Stores a signed endorsement blob. The directory MAY opportunistically
+        verify the signature against any locally-known public key for the
+        endorser as a sanity check, but storage does not depend on
+        verification — clients verify locally per spec §2.5.
+      operationId: createEndorsement
+      security:
+        - GeneralApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - endorser
+                - contentHash
+                - signature
+                - timestamp
+              properties:
+                endorser:
+                  type: string
+                  description: Opaque endorser keyid (e.g. "did:web:publisher.org")
+                contentHash:
+                  type: string
+                  description: The targeted content hash (e.g. "sha256:...")
+                signature:
+                  type: string
+                  description: Base64 signature over "{contentHash}:{timestamp}"
+                timestamp:
+                  type: string
+                  description: ISO-8601 timestamp at which the endorsement was issued
+                algorithm:
+                  type: string
+                  description: Signature algorithm (default ed25519)
+                  default: ed25519
+                rawBlob:
+                  type: string
+                  description: |
+                    The exact bytes the client signed over. Clients SHOULD
+                    supply this so verifiers can re-verify byte-identically.
+                    If omitted, the server constructs a canonical blob in a
+                    stable key order.
+      responses:
+        "201":
+          description: Endorsement stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Endorsement"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /endorsements/{id}:
+    delete:
+      tags:
+        - Endorsements
+      summary: Delete an endorsement
+      description: |
+        Removes an endorsement from the directory. MVP: gated behind the
+        general API key only. Production deployments MUST additionally
+        require that the caller's authenticated identity match the
+        endorsement's `endorser` keyid.
+      operationId: deleteEndorsement
+      security:
+        - GeneralApiKey: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Endorsement deleted
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Endorsement not found
           content:
             application/json:
               schema:

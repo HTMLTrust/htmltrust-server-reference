@@ -6,6 +6,18 @@ const ContentSignatureSchema = new mongoose.Schema({
     required: [true, 'Content hash is required'],
     index: true
   },
+  // Canonical hash of the claims map (sorted, newline-joined "name=value"
+  // serialization, then hashed). Part of the signature binding per spec §2.1.
+  claimsHash: {
+    type: String,
+    default: ''
+  },
+  // ISO-8601 timestamp from the <meta name="signed-at"> element in the
+  // signed-section. Part of the signature binding per spec §2.1.
+  signedAt: {
+    type: String,
+    default: ''
+  },
   domain: {
     type: String,
     required: [true, 'Domain is required'],

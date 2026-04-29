@@ -24,6 +24,7 @@ app.use('/api/content', require('./routes/content'));
 app.use('/api/claims', require('./routes/claims'));
 app.use('/api/directory', require('./routes/directory'));
 app.use('/api/votes', require('./routes/votes'));
+app.use('/api/endorsements', require('./routes/endorsements'));
 
 // Default route
 app.get('/', (req, res) => {

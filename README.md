@@ -70,10 +70,17 @@ Full API documentation is in [`openapi.yaml`](openapi.yaml). Key endpoint groups
 | `POST /api/authors` | Create author + key pair | General API key |
 | `GET /api/authors/:id/public-key` | Get author's public key | Public |
 | `POST /api/content/sign` | Sign a content hash | Author API key |
-| `POST /api/content/verify` | Verify a signature | Public |
+| `POST /api/content/verify` | Verify a signature (deprecated, see below) | Public |
 | `GET /api/directory/keys` | Search public keys | Public |
 | `GET /api/directory/content` | Search signed content | Public |
+| `GET /api/endorsements?content-hash=...` | List endorsements for a content hash | Public |
+| `POST /api/endorsements` | Submit a signed endorsement | General API key |
+| `DELETE /api/endorsements/:id` | Delete an endorsement | General API key |
 | `POST /api/votes` | Vote trust/distrust | General API key |
+
+### Deprecated endpoints
+
+`POST /api/content/verify` is deprecated. Per [HTMLTrust spec §3.1](https://htmltrust.dev/spec#section-3-1), cryptographic verification is a local operation: clients MUST verify signatures themselves (e.g. via `SubtleCrypto`) using public keys resolved through the directory's key endpoints. A remote yes/no answer from the directory is by definition not a cryptographic guarantee since the directory is not part of the trust root. The endpoint remains as a low-trust convenience for legacy clients, returns the `Deprecation: true` header (RFC 9745), and will be removed in a future major version. The directory's role is to serve public keys, endorsements, and reputation data — not to act as an oracle for signature validity.
 
 ### Authentication
 
@@ -97,6 +104,7 @@ src/
 │   ├── claimController.js
 │   ├── contentController.js
 │   ├── directoryController.js
+│   ├── endorsementController.js
 │   └── voteController.js
 ├── middleware/
 │   └── auth.js            # API key authentication
@@ -105,6 +113,7 @@ src/
 │   ├── Claim.js
 │   ├── ContentOccurrence.js
 │   ├── ContentSignature.js
+│   ├── Endorsement.js
 │   ├── Key.js
 │   └── Vote.js
 ├── public/                # Demo web UI
@@ -115,6 +124,7 @@ src/
 │   ├── claims.js
 │   ├── content.js
 │   ├── directory.js
+│   ├── endorsements.js
 │   └── votes.js
 └── utils/
     └── crypto.js          # Key generation, signing, verification
