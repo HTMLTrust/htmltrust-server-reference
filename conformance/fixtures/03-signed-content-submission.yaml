@@ -1,0 +1,64 @@
+# 03 — Signed content submission
+#
+# Prerequisite: create an author so we have an author-scoped API key.
+# Then sign a content hash. The signature itself is server-generated;
+# we only assert response shape (the spec requires contentHash, domain,
+# authorId, signature, and claims to be present).
+name: Sign content with author key
+description: |
+  POST /content/sign produces a ContentSignature bound to the author's key.
+steps:
+  - name: Create author (signing identity)
+    request:
+      method: POST
+      path: /authors
+      headers:
+        X-API-KEY: $generalApiKey
+      body:
+        name: "Signer 03-$run_nonce"
+        keyType: "HUMAN"
+        keyAlgorithm: "ED25519"
+    expect:
+      status: 201
+    capture:
+      authorId: $.author.id
+      authorApiKey: $.authorApiKey
+
+  - name: Sign content
+    request:
+      method: POST
+      path: /content/sign
+      headers:
+        X-AUTHOR-API-KEY: $authorApiKey
+      body:
+        contentHash: "sha256:03-$run_nonce-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        domain: "conformance.example.com"
+        claims:
+          ContentType: "Article"
+          License: "CC-BY-4.0"
+    expect:
+      status: 201
+      schema: ContentSignature
+      body:
+        contentHash: "sha256:03-$run_nonce-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        domain: "conformance.example.com"
+        signature: $nonempty-string
+        claims:
+          ContentType: "Article"
+          License: "CC-BY-4.0"
+    capture:
+      signature: $.signature
+
+  - name: Verify the freshly signed content
+    request:
+      method: POST
+      path: /content/verify
+      body:
+        contentHash: "sha256:03-$run_nonce-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        domain: "conformance.example.com"
+        authorId: $authorId
+        signature: $signature
+    expect:
+      status: 200
+      body:
+        valid: true

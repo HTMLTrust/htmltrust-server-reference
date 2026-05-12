@@ -1,0 +1,81 @@
+# 06 — Endorsement listing & statistics
+#
+# Continues the same implementation-level vote API as 05. After submitting
+# an endorsement, we list votes for the target and pull aggregate stats.
+name: List endorsements and aggregate stats for an author
+description: |
+  GET /votes/{targetType}/{targetId} returns paginated votes plus trust/distrust
+  counts. GET /votes/stats/{targetType}/{targetId} returns aggregate stats.
+steps:
+  - name: Create author
+    request:
+      method: POST
+      path: /authors
+      headers:
+        X-API-KEY: $generalApiKey
+      body:
+        name: "Tallied 06-$run_nonce"
+        keyType: "HUMAN"
+    expect:
+      status: 201
+    capture:
+      authorId: $.author.id
+
+  - name: Cast a TRUST vote
+    request:
+      method: POST
+      path: /votes
+      headers:
+        X-API-KEY: $generalApiKey
+      body:
+        userId: "voter-a-06-$run_nonce"
+        targetType: "AUTHOR"
+        targetId: $authorId
+        voteType: "TRUST"
+    expect:
+      status: 201
+
+  - name: Cast a DISTRUST vote from a different user
+    request:
+      method: POST
+      path: /votes
+      headers:
+        X-API-KEY: $generalApiKey
+      body:
+        userId: "voter-b-06-$run_nonce"
+        targetType: "AUTHOR"
+        targetId: $authorId
+        voteType: "DISTRUST"
+    expect:
+      status: 201
+
+  - name: List votes for the author
+    request:
+      method: GET
+      path: /votes/AUTHOR/$authorId
+    expect:
+      status: 200
+      body:
+        votes: $any
+        counts:
+          trust: $integer
+          distrust: $integer
+          total: $integer
+        pagination:
+          page: $integer
+          limit: $integer
+          total: $integer
+          pages: $integer
+
+  - name: Aggregate vote stats for the author
+    request:
+      method: GET
+      path: /votes/stats/AUTHOR/$authorId
+    expect:
+      status: 200
+      body:
+        targetType: "AUTHOR"
+        trustCount: $integer
+        distrustCount: $integer
+        totalVotes: $integer
+        trustScore: $number

@@ -1,0 +1,85 @@
+# 02 — Author CRUD
+#
+# Exercises the full lifecycle of an author: create with a generated key
+# pair, fetch by id, fetch the public key, update with the author-scoped
+# API key, delete with the author-scoped API key, then confirm deletion
+# returns 404. Each run uses a unique author name to remain idempotent.
+name: Author create / read / update / delete
+description: |
+  Full lifecycle: POST /authors -> GET /authors/{id} -> GET /authors/{id}/public-key
+  -> PUT /authors/{id} -> DELETE /authors/{id} -> GET /authors/{id} (404).
+steps:
+  - name: Create author
+    request:
+      method: POST
+      path: /authors
+      headers:
+        X-API-KEY: $generalApiKey
+      body:
+        name: "Conformance Author 02-${run_nonce}"
+        description: "Created by conformance suite"
+        url: "https://example.com/conformance"
+        keyType: "HUMAN"
+        keyAlgorithm: "ED25519"
+    expect:
+      status: 201
+      body:
+        author:
+          name: $nonempty-string
+          keyType: "HUMAN"
+        authorApiKey: $nonempty-string
+    capture:
+      authorId: $.author.id
+      authorApiKey: $.authorApiKey
+
+  - name: Get author by id
+    request:
+      method: GET
+      path: /authors/$authorId
+    expect:
+      status: 200
+      schema: Author
+
+  - name: Get author public key
+    request:
+      method: GET
+      path: /authors/$authorId/public-key
+    expect:
+      status: 200
+      schema: PublicKey
+      body:
+        algorithm: "ED25519"
+        key: $nonempty-string
+
+  - name: Update author with author API key
+    request:
+      method: PUT
+      path: /authors/$authorId
+      headers:
+        X-AUTHOR-API-KEY: $authorApiKey
+      body:
+        description: "Updated by conformance suite"
+    expect:
+      status: 200
+      body:
+        description: "Updated by conformance suite"
+
+  - name: Delete author
+    request:
+      method: DELETE
+      path: /authors/$authorId
+      headers:
+        X-AUTHOR-API-KEY: $authorApiKey
+    expect:
+      status: 204
+
+  - name: Confirm author is gone
+    request:
+      method: GET
+      path: /authors/$authorId
+    expect:
+      status: 404
+      schema: Error
+
+# NOTE: `$run_nonce` is auto-injected by the runner — a unique value per
+# scenario run — so the suite stays idempotent across repeated invocations.

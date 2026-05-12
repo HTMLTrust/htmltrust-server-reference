@@ -1,0 +1,65 @@
+# 05 — Endorsement submission
+#
+# Note: the OpenAPI spec at openapi.yaml does not currently define the
+# /votes endpoints, but the reference implementation exposes them as the
+# "endorsement" / trust-distrust mechanism the spec text references.
+# This fixture exercises the implementation-level vote submission flow:
+# create an author, then submit a TRUST vote against that author.
+#
+# A future revision of the OpenAPI spec is expected to formalize these
+# endpoints; until then the suite asserts only the documented behaviour
+# of the implementation (status code + presence of identifying fields).
+name: Submit trust endorsement (vote) on an author
+description: |
+  POST /votes accepts a TRUST or DISTRUST vote against an AUTHOR or CONTENT
+  target. This scenario submits a TRUST vote and verifies it is recorded.
+steps:
+  - name: Create author to endorse
+    request:
+      method: POST
+      path: /authors
+      headers:
+        X-API-KEY: $generalApiKey
+      body:
+        name: "Endorsee 05-$run_nonce"
+        keyType: "HUMAN"
+    expect:
+      status: 201
+    capture:
+      authorId: $.author.id
+
+  - name: Submit TRUST endorsement
+    request:
+      method: POST
+      path: /votes
+      headers:
+        X-API-KEY: $generalApiKey
+      body:
+        userId: "voter-05-$run_nonce"
+        targetType: "AUTHOR"
+        targetId: $authorId
+        voteType: "TRUST"
+        reason: "Conformance scenario 05"
+    expect:
+      status: 201
+      body:
+        targetType: "AUTHOR"
+        voteType: "TRUST"
+
+  - name: Submit DISTRUST endorsement (updates existing vote, same user/target)
+    request:
+      method: POST
+      path: /votes
+      headers:
+        X-API-KEY: $generalApiKey
+      body:
+        userId: "voter-05-$run_nonce"
+        targetType: "AUTHOR"
+        targetId: $authorId
+        voteType: "DISTRUST"
+        reason: "Changed my mind"
+    expect:
+      status: 201
+      body:
+        targetType: "AUTHOR"
+        voteType: "DISTRUST"

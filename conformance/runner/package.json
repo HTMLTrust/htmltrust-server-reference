@@ -1,0 +1,20 @@
+{
+  "name": "htmltrust-conformance-runner",
+  "version": "0.1.0",
+  "description": "Implementation-agnostic conformance suite for HTMLTrust trust-directory servers",
+  "private": true,
+  "type": "module",
+  "main": "run.mjs",
+  "bin": {
+    "htmltrust-conformance": "./run.mjs"
+  },
+  "scripts": {
+    "start": "node run.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "yaml": "^2.5.0"
+  }
+}

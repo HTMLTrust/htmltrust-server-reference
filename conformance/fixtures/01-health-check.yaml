@@ -1,0 +1,24 @@
+# 01 — Health check
+#
+# The OpenAPI spec does not define a dedicated /health endpoint. As a
+# lightweight liveness check we hit a low-impact, public endpoint
+# (GET /claims) which is documented as requiring no auth. A conformant
+# server MUST return a 200 with a paginated `claims` array.
+name: Health check via public claims listing
+description: |
+  Verifies the server is reachable and that the public claim-type listing
+  endpoint returns the documented envelope shape.
+steps:
+  - name: GET /claims (no auth required)
+    request:
+      method: GET
+      path: /claims
+    expect:
+      status: 200
+      body:
+        claims: $any
+        pagination:
+          page: $integer
+          limit: $integer
+          total: $integer
+          pages: $integer

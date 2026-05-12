@@ -1,0 +1,61 @@
+# 08 — Key reporting
+#
+# A holder of a general API key can file a report against a key for
+# IMPERSONATION / MISINFORMATION / SPAM / OTHER. Filing a report should
+# return 201 with a reportId and a status field.
+name: Report a key for suspicious activity
+description: |
+  POST /directory/keys/{keyId}/report files a report and returns reportId +
+  status. We also assert 404 when targeting an unknown key.
+steps:
+  - name: Create author whose key we'll report
+    request:
+      method: POST
+      path: /authors
+      headers:
+        X-API-KEY: $generalApiKey
+      body:
+        name: "Reported 08-$run_nonce"
+        keyType: "AI"
+    expect:
+      status: 201
+    capture:
+      authorId: $.author.id
+
+  - name: Look up the key id
+    request:
+      method: GET
+      path: /authors/$authorId/public-key
+    expect:
+      status: 200
+    capture:
+      keyId: $.id
+
+  - name: File a report against the key
+    request:
+      method: POST
+      path: /directory/keys/$keyId/report
+      headers:
+        X-API-KEY: $generalApiKey
+      body:
+        reason: "MISINFORMATION"
+        details: "Filed by the HTMLTrust conformance suite"
+        evidence: "https://example.com/conformance/evidence"
+    expect:
+      status: 201
+      body:
+        reportId: $nonempty-string
+        status: $nonempty-string
+
+  - name: Reporting a non-existent key returns 404
+    request:
+      method: POST
+      path: /directory/keys/000000000000000000000000/report
+      headers:
+        X-API-KEY: $generalApiKey
+      body:
+        reason: "OTHER"
+        details: "should not exist"
+    expect:
+      status: 404
+      schema: Error

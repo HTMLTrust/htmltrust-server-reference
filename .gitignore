@@ -13,3 +13,6 @@ npm-debug.log*
 # Build output
 dist/
 build/
+
+# Conformance runtime artifacts
+conformance/.server.log

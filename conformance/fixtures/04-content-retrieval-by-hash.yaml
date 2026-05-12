@@ -1,0 +1,62 @@
+# 04 — Content retrieval by hash
+#
+# Prerequisite: create an author, sign content under a fresh hash, then
+# query the directory by that hash via GET /directory/content?contentHash=...
+# Also exercises GET /directory/content/{hash}/occurrences which 404s if
+# the hash isn't known.
+name: Search and retrieve signed content by hash
+description: |
+  Validates that content signatures registered via POST /content/sign become
+  searchable through the directory by content hash.
+steps:
+  - name: Create author
+    request:
+      method: POST
+      path: /authors
+      headers:
+        X-API-KEY: $generalApiKey
+      body:
+        name: "Retriever 04-$run_nonce"
+        keyType: "HUMAN"
+        keyAlgorithm: "ED25519"
+    expect:
+      status: 201
+    capture:
+      authorId: $.author.id
+      authorApiKey: $.authorApiKey
+
+  - name: Sign content with a hash we can later query
+    request:
+      method: POST
+      path: /content/sign
+      headers:
+        X-AUTHOR-API-KEY: $authorApiKey
+      body:
+        contentHash: "sha256:04-$run_nonce-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        domain: "retrieval.example.com"
+        claims:
+          ContentType: "Article"
+    expect:
+      status: 201
+
+  - name: Search the directory by content hash
+    request:
+      method: GET
+      path: "/directory/content?contentHash=sha256:04-$run_nonce-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    expect:
+      status: 200
+      body:
+        signatures: $any
+        pagination:
+          page: $integer
+          limit: $integer
+          total: $integer
+          pages: $integer
+
+  - name: Query occurrences for an unknown content hash returns 404
+    request:
+      method: GET
+      path: "/directory/content/sha256:does-not-exist-$run_nonce/occurrences"
+    expect:
+      status: 404
+      schema: Error

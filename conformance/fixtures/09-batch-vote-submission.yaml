@@ -1,0 +1,88 @@
+# 09 — Batch vote submission
+#
+# The current spec does not expose a single batch-vote endpoint, so this
+# fixture submits several votes sequentially against the same target and
+# then asserts the aggregate stats reflect every submission. This is the
+# closest single-implementation analogue to a batch endpoint until the
+# spec formalizes one.
+name: Submit several votes from distinct users and verify aggregate stats
+description: |
+  Sequentially POSTs three TRUST votes and one DISTRUST vote from distinct
+  user IDs, then asserts the stats endpoint returns the expected counts.
+steps:
+  - name: Create author
+    request:
+      method: POST
+      path: /authors
+      headers:
+        X-API-KEY: $generalApiKey
+      body:
+        name: "Batch 09-$run_nonce"
+        keyType: "ORGANIZATION"
+    expect:
+      status: 201
+    capture:
+      authorId: $.author.id
+
+  - name: Vote 1 of 4 (TRUST)
+    request:
+      method: POST
+      path: /votes
+      headers:
+        X-API-KEY: $generalApiKey
+      body:
+        userId: "batch-09-$run_nonce-1"
+        targetType: "AUTHOR"
+        targetId: $authorId
+        voteType: "TRUST"
+    expect: { status: 201 }
+
+  - name: Vote 2 of 4 (TRUST)
+    request:
+      method: POST
+      path: /votes
+      headers:
+        X-API-KEY: $generalApiKey
+      body:
+        userId: "batch-09-$run_nonce-2"
+        targetType: "AUTHOR"
+        targetId: $authorId
+        voteType: "TRUST"
+    expect: { status: 201 }
+
+  - name: Vote 3 of 4 (TRUST)
+    request:
+      method: POST
+      path: /votes
+      headers:
+        X-API-KEY: $generalApiKey
+      body:
+        userId: "batch-09-$run_nonce-3"
+        targetType: "AUTHOR"
+        targetId: $authorId
+        voteType: "TRUST"
+    expect: { status: 201 }
+
+  - name: Vote 4 of 4 (DISTRUST)
+    request:
+      method: POST
+      path: /votes
+      headers:
+        X-API-KEY: $generalApiKey
+      body:
+        userId: "batch-09-$run_nonce-4"
+        targetType: "AUTHOR"
+        targetId: $authorId
+        voteType: "DISTRUST"
+    expect: { status: 201 }
+
+  - name: Confirm aggregate stats reflect all four votes
+    request:
+      method: GET
+      path: /votes/stats/AUTHOR/$authorId
+    expect:
+      status: 200
+      body:
+        trustCount: 3
+        distrustCount: 1
+        totalVotes: 4
