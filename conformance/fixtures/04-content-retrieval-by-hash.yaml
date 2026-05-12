@@ -33,7 +33,9 @@ steps:
         X-AUTHOR-API-KEY: $authorApiKey
       body:
         contentHash: "sha256:04-$run_nonce-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        claimsHash: "sha256:04-claims-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         domain: "retrieval.example.com"
+        signedAt: "2026-05-12T12:00:00.000Z"
         claims:
           ContentType: "Article"
     expect:

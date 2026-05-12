@@ -32,7 +32,9 @@ steps:
         X-AUTHOR-API-KEY: $authorApiKey
       body:
         contentHash: "sha256:03-$run_nonce-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        claimsHash: "sha256:03-claims-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         domain: "conformance.example.com"
+        signedAt: "2026-05-12T12:00:00.000Z"
         claims:
           ContentType: "Article"
           License: "CC-BY-4.0"
@@ -55,7 +57,9 @@ steps:
       path: /content/verify
       body:
         contentHash: "sha256:03-$run_nonce-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        claimsHash: "sha256:03-claims-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         domain: "conformance.example.com"
+        signedAt: "2026-05-12T12:00:00.000Z"
         authorId: $authorId
         signature: $signature
     expect:
