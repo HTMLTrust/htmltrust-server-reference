@@ -5,9 +5,17 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "nodemon src/server.js"
+    "dev": "nodemon src/server.js",
+    "conformance": "node conformance/runner/with-reference-server.mjs",
+    "conformance:docker": "bash conformance/run-conformance.sh",
+    "conformance:runner": "node conformance/runner/run.mjs"
   },
-  "keywords": ["htmltrust", "content-signing", "trust-directory", "web-trust"],
+  "keywords": [
+    "htmltrust",
+    "content-signing",
+    "trust-directory",
+    "web-trust"
+  ],
   "author": "Jason Grey <jason@jason-grey.com>",
   "license": "MIT",
   "dependencies": {
@@ -19,6 +27,7 @@
     "mongoose": "^8.14.1"
   },
   "devDependencies": {
+    "mongodb-memory-server": "^11.1.0",
     "nodemon": "^3.1.10"
   }
 }

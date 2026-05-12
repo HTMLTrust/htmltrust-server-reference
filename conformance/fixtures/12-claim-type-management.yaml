@@ -1,0 +1,63 @@
+# 12 — Claim type management
+#
+# Claim types are admin-managed. We:
+#   - create a new claim type with the admin API key
+#   - confirm it appears in the listing
+#   - fetch it by id
+#   - confirm 401 when creating without the admin key
+name: Admin-only claim type creation and retrieval
+description: |
+  POST /claims requires X-ADMIN-API-KEY. After creation the claim is publicly
+  listable and fetchable by id.
+steps:
+  - name: 401 when creating without admin key
+    request:
+      method: POST
+      path: /claims
+      body:
+        name: "Conformance-12-$run_nonce"
+        description: "Should fail"
+    expect:
+      status: 401
+      schema: Error
+
+  - name: Create claim type as admin
+    request:
+      method: POST
+      path: /claims
+      headers:
+        X-ADMIN-API-KEY: $adminApiKey
+      body:
+        name: "Conformance-12-$run_nonce"
+        description: "Created by conformance scenario 12"
+        possibleValues: ["alpha", "beta", "gamma"]
+    expect:
+      status: 201
+      schema: Claim
+      body:
+        name: "Conformance-12-$run_nonce"
+    capture:
+      # Spec-style $.id; with --accept-mongo-ids the runner falls back to $._id
+      claimId: $.id
+
+  - name: List claim types
+    request:
+      method: GET
+      path: /claims
+    expect:
+      status: 200
+      body:
+        claims: $any
+        pagination:
+          page: $integer
+          limit: $integer
+          total: $integer
+          pages: $integer
+
+  - name: Fetch the freshly created claim by id
+    request:
+      method: GET
+      path: /claims/$claimId
+    expect:
+      status: 200
+      schema: Claim

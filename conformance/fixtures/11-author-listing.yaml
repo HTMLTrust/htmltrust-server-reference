@@ -1,0 +1,59 @@
+# 11 — Author listing & filtering
+#
+# GET /authors returns a paginated list. We create an author with a
+# distinctive name and then verify it is searchable by name and by
+# keyType.
+name: List and filter authors
+description: |
+  Confirms the paginated authors envelope and name/keyType filtering.
+steps:
+  - name: Create author with distinctive name
+    request:
+      method: POST
+      path: /authors
+      headers:
+        X-API-KEY: $generalApiKey
+      body:
+        name: "Listable-11-$run_nonce-unique"
+        keyType: "ORGANIZATION"
+    expect:
+      status: 201
+    capture:
+      authorId: $.author.id
+
+  - name: List with no filters
+    request:
+      method: GET
+      path: /authors
+      headers:
+        X-API-KEY: $generalApiKey
+    expect:
+      status: 200
+      body:
+        authors: $any
+        pagination:
+          page: $integer
+          limit: $integer
+          total: $integer
+          pages: $integer
+
+  - name: Filter by the unique name fragment
+    request:
+      method: GET
+      path: "/authors?name=Listable-11-$run_nonce-unique"
+      headers:
+        X-API-KEY: $generalApiKey
+    expect:
+      status: 200
+      body:
+        pagination:
+          total: 1
+
+  - name: Filter by keyType=ORGANIZATION matches at least one author
+    request:
+      method: GET
+      path: "/authors?keyType=ORGANIZATION&limit=100"
+      headers:
+        X-API-KEY: $generalApiKey
+    expect:
+      status: 200

@@ -1,0 +1,83 @@
+# 10 — Error responses
+#
+# Conformant servers MUST return the documented Error envelope (code +
+# message) with the appropriate status code for the failure mode. This
+# scenario probes:
+#   * 401 — POST /authors without X-API-KEY
+#   * 401 — PUT /authors/{id} without X-AUTHOR-API-KEY
+#   * 403 — PUT /authors/{otherId} with the wrong author's API key
+#   * 404 — GET /authors/{bogus-id}
+name: Documented error envelopes are returned with correct status codes
+description: |
+  Asserts the Error schema is returned for unauthorized, forbidden, and
+  not-found cases.
+steps:
+  - name: Create authorA (we'll use its key to forbidden-update authorB)
+    request:
+      method: POST
+      path: /authors
+      headers:
+        X-API-KEY: $generalApiKey
+      body:
+        name: "ErrA 10-$run_nonce"
+        keyType: "HUMAN"
+    expect:
+      status: 201
+    capture:
+      authorAId: $.author.id
+      authorAKey: $.authorApiKey
+
+  - name: Create authorB
+    request:
+      method: POST
+      path: /authors
+      headers:
+        X-API-KEY: $generalApiKey
+      body:
+        name: "ErrB 10-$run_nonce"
+        keyType: "HUMAN"
+    expect:
+      status: 201
+    capture:
+      authorBId: $.author.id
+
+  - name: 401 — POST /authors with no general API key
+    request:
+      method: POST
+      path: /authors
+      body:
+        name: "Should fail"
+        keyType: "HUMAN"
+    expect:
+      status: 401
+      schema: Error
+
+  - name: 401 — PUT /authors/{id} with no author API key
+    request:
+      method: PUT
+      path: /authors/$authorBId
+      body:
+        description: "Should fail"
+    expect:
+      status: 401
+      schema: Error
+
+  - name: 403 — PUT /authors/{authorB} with authorA's key
+    request:
+      method: PUT
+      path: /authors/$authorBId
+      headers:
+        X-AUTHOR-API-KEY: $authorAKey
+      body:
+        description: "Cross-author update should be forbidden"
+    expect:
+      status: 403
+      schema: Error
+
+  - name: 404 — GET /authors/{nonexistent}
+    request:
+      method: GET
+      path: /authors/000000000000000000000000
+    expect:
+      status: 404
+      schema: Error
