@@ -17,7 +17,7 @@
     "web-trust"
   ],
   "author": "Jason Grey <jason@jason-grey.com>",
-  "license": "MIT",
+  "license": "LicenseRef-PolyForm-Noncommercial-1.0.0",
   "dependencies": {
     "@htmltrust/canonicalization": "github:HTMLTrust/htmltrust-canonicalization#v0.1.0",
     "cors": "^2.8.5",

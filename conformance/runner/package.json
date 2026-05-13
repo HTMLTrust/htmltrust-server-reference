@@ -16,5 +16,6 @@
   },
   "dependencies": {
     "yaml": "^2.5.0"
-  }
+  },
+  "license": "LicenseRef-PolyForm-Noncommercial-1.0.0"
 }
