@@ -8,7 +8,7 @@ info:
   version: 1.0.0
   contact:
     name: HTMLTrust
-    url: https://github.com/ArcadeLabsInc/htmltrust-server-reference
+    url: https://github.com/HTMLTrust/htmltrust-server-reference
     email: jason@jason-grey.com
 
 servers:

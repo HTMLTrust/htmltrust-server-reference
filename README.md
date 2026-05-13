@@ -2,7 +2,7 @@
 
 Reference implementation of the HTMLTrust trust directory API — a server that manages author identities, cryptographic key pairs, content signing/verification, and a federated trust directory with reputation tracking.
 
-This is a companion to the [HTMLTrust specification](https://github.com/ArcadeLabsInc/htmltrust-spec).
+This is a companion to the [HTMLTrust specification](https://github.com/HTMLTrust/htmltrust-spec).
 
 ## Personality: the "permissive community directory"
 
@@ -42,7 +42,7 @@ This server implements the **Trust Directory** component of the HTMLTrust system
 ### Setup
 
 ```sh
-git clone https://github.com/ArcadeLabsInc/htmltrust-server-reference.git
+git clone https://github.com/HTMLTrust/htmltrust-server-reference.git
 cd htmltrust-server-reference
 cp .env.example .env    # Edit with your values
 npm install
@@ -134,10 +134,10 @@ src/
 
 | Repository | Description |
 |---|---|
-| [htmltrust-spec](https://github.com/ArcadeLabsInc/htmltrust-spec) | The HTMLTrust specification and paper |
-| [htmltrust-browser-reference](https://github.com/ArcadeLabsInc/htmltrust-browser-reference) | Reference browser extension for signature validation |
-| [htmltrust-cms-reference](https://github.com/ArcadeLabsInc/htmltrust-cms-reference) | Reference CMS plugin (WordPress) |
-| [htmltrust-website](https://github.com/ArcadeLabsInc/htmltrust-website) | Project website |
+| [htmltrust-spec](https://github.com/HTMLTrust/htmltrust-spec) | The HTMLTrust specification and paper |
+| [htmltrust-browser-reference](https://github.com/HTMLTrust/htmltrust-browser-reference) | Reference browser extension for signature validation |
+| [htmltrust-cms-reference](https://github.com/HTMLTrust/htmltrust-cms-reference) | Reference CMS plugin (WordPress) |
+| [htmltrust-website](https://github.com/HTMLTrust/htmltrust-website) | Project website |
 
 ## License
 
