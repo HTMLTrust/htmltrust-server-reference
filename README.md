@@ -1,19 +1,42 @@
 # HTMLTrust Server Reference (Node.js)
 
-Reference implementation of the HTMLTrust trust directory API — a server that manages author identities, cryptographic key pairs, content signing/verification, and a federated trust directory with reputation tracking.
+Runnable Node.js reference implementation of the HTMLTrust trust directory API. It manages author identities, cryptographic key pairs, content signing and verification, and a federated trust directory with reputation tracking.
 
 This is a companion to the [HTMLTrust specification](https://github.com/HTMLTrust/htmltrust-spec).
 
+## Current status
+
+This repository is the runnable Node.js reference server used for local development and the end-to-end simulation. The sibling Python and Rust repositories are design scaffolds with no runnable server code and make no conformance claim.
+
+## Prerequisites
+
+- Node.js 22+
+- MongoDB, local or remote
+
+## Quick start
+
+```sh
+git clone https://github.com/HTMLTrust/htmltrust-server-reference.git
+cd htmltrust-server-reference
+npm ci
+cp .env.example .env    # Edit with your values
+npm run dev             # Starts with nodemon (auto-reload)
+```
+
+The server starts at `http://localhost:3000`. A demo web UI is available at the root URL. See [Environment Variables](#environment-variables) for required production settings.
+
+Run the unit tests with `npm test`. The full API conformance suite needs a disposable MongoDB instance; see [Tests](#tests).
+
 ## Personality: the "permissive community directory"
 
-The HTMLTrust protocol is federated, meaning multiple trust directories MAY coexist with different curatorial philosophies. This Node.js implementation is the baseline reference: full-featured, permissive, and neutral -- suitable for general-purpose deployment and as a canonical implementation of every endpoint in the OpenAPI spec.
+The HTMLTrust protocol is federated, meaning multiple trust directories MAY coexist with different curatorial philosophies. This Node.js implementation is the baseline reference: full-featured, permissive, and neutral, suitable for general-purpose deployment and for exercising the OpenAPI endpoints.
 
 The sibling reference implementations demonstrate alternative curatorial philosophies using the same protocol:
 
-- **[`htmltrust-server-reference-python`](../htmltrust-server-reference-python/)** -- curated journalism directory. Admin-approval queue, Article/News scope, punitive reputation formula. Simulates EFF/ProPublica/Poynter-style deployments.
-- **[`htmltrust-server-reference-rust`](../htmltrust-server-reference-rust/)** -- rapid-flag public-safety directory. Time-decayed reputation, whitelisted-researcher fatal flagging, PostgreSQL backend. Simulates Internet Archive / security research collective deployments.
+- **[`htmltrust-server-reference-python`](../htmltrust-server-reference-python/)** -- planned curated journalism directory. Its repository is a design scaffold.
+- **[`htmltrust-server-reference-rust`](../htmltrust-server-reference-rust/)** -- planned rapid-flag public-safety directory. Its repository is a design scaffold.
 
-All three conform to the same OpenAPI spec. Clients don't need per-directory logic -- they simply subscribe to one or more directories and weight the returned scores according to their own trust policy.
+The planned implementations target the same OpenAPI contract. Only this Node.js repository currently provides a runnable reference for local testing.
 
 ## What It Does
 
@@ -31,30 +54,6 @@ This server implements the **Trust Directory** component of the HTMLTrust system
 - **Node.js** + **Express 5**
 - **MongoDB** via **Mongoose**
 - **Node.js `crypto`** for key generation, signing, and verification (RSA, ECDSA, Ed25519)
-
-## Quick Start
-
-### Prerequisites
-
-- Node.js 22+
-- MongoDB (local or remote)
-
-### Setup
-
-```sh
-git clone https://github.com/HTMLTrust/htmltrust-server-reference.git
-cd htmltrust-server-reference
-cp .env.example .env    # Edit with your values
-npm install
-npm run dev             # Starts with nodemon (auto-reload)
-```
-
-The server starts at `http://localhost:3000`. A demo web UI is available at the root URL.
-
-To use the checked-in lockfile, replace `npm install` with `npm ci`. For a
-containerized development environment, open the repository in VS Code Dev
-Containers. The configuration starts Node 22 and MongoDB 7 with the same
-application URL and development credentials.
 
 ### Tests
 
