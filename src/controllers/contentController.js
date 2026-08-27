@@ -18,6 +18,7 @@ const {
   signedAtFromClaims,
 } = require('../utils/htmltrustProtocol');
 const { canonicalizeClaims } = require('../utils/claims');
+const { directoryKeyUrl } = require('../utils/directoryUrl');
 
 /**
  * Build the canonical binding string that is actually signed.
@@ -83,7 +84,7 @@ const validateSignatureInputs = ({ contentHash, claimsHash, domain, signedAt, si
   };
 };
 
-const keyidFor = (req, key) => `${req.protocol}://${req.get('host')}/api/keys/${key._id}`;
+const keyidFor = (req, key) => directoryKeyUrl(req, key._id);
 
 /**
  * Resolve a submitted keyid to a usable key, honouring revocation and expiry
