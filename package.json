@@ -20,7 +20,7 @@
   "author": "Jason Grey <jason@jason-grey.com>",
   "license": "LicenseRef-PolyForm-Noncommercial-1.0.0",
   "dependencies": {
-    "@htmltrust/canonicalization": "github:HTMLTrust/htmltrust-canonicalization#v0.1.0",
+    "@htmltrust/canonicalization": "https://github.com/HTMLTrust/htmltrust-canonicalization/archive/refs/tags/v0.2.2.tar.gz",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
