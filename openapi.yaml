@@ -383,6 +383,8 @@ components:
         - signedAt
         - domain
         - authorId
+        - keyid
+        - algorithm
         - signature
         - claims
       properties:
@@ -402,6 +404,12 @@ components:
           type: string
           format: uuid
           description: ID of the author who signed the content
+        keyid:
+          type: string
+          description: Resolvable identifier for the signing key
+        algorithm:
+          type: string
+          description: Signature algorithm identifier from the registry
         signature:
           type: string
           description: Canonical unpadded standard Base64 signature over contentHash:claimsHash:domain:signedAt
@@ -419,6 +427,8 @@ components:
         signedAt: "2026-05-01T10:30:00Z"
         domain: "https://example.com"
         authorId: "123e4567-e89b-12d3-a456-426614174000"
+        keyid: "https://directory.example/api/keys/123e4567-e89b-12d3-a456-426614174001"
+        algorithm: "ed25519"
         signature: "MEUCIQD7y5SxmQJ9f0lE9B0BwqIJKKdL5fZMNQOiPnKWUJfmrgIgEbHtPwDxM9xGbCZzW9k2R9jFxwJZQQlPfhgj+0YP7vQ="
         claims:
           ContentType: "Article"

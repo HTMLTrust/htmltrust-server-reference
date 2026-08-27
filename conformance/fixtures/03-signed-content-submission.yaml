@@ -46,6 +46,8 @@ steps:
         contentHash: "sha256:xJTJYuXl1MuP1EjRLhKtgMUZvvc6qexrTMHyVnVL+Yc"
         domain: "https://conformance.example.com"
         signature: $nonempty-string
+        algorithm: "ed25519"
+        keyid: $nonempty-string
         claims:
           ContentType: "Article"
           License: "CC-BY-4.0"

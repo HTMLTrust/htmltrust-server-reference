@@ -12,6 +12,7 @@ const {
   detailFor,
   invalid,
   normalizeClaims,
+  normalizeAlgorithm,
   normalizeSerializedOrigin,
   problem,
   signedAtFromClaims,
@@ -241,6 +242,7 @@ exports.signContent = async (req, res) => {
       authorId: author._id,
       signature,
       keyid: keyidFor(req, key),
+      algorithm: normalizeAlgorithm(key.algorithm),
       claims: claimsObject(claims),
       createdAt: contentSignature.createdAt
     });
