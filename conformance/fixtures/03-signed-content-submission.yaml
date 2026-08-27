@@ -31,19 +31,20 @@ steps:
       headers:
         X-AUTHOR-API-KEY: $authorApiKey
       body:
-        contentHash: "sha256:03-$run_nonce-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-        claimsHash: "sha256:03-claims-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-        domain: "conformance.example.com"
+        contentHash: "sha256:xJTJYuXl1MuP1EjRLhKtgMUZvvc6qexrTMHyVnVL+Yc"
+        claimsHash: "sha256:EOlXUVED7G9RI90/iTXXNtY79KQEW6LxLVOVtsjlHWs"
+        domain: "https://conformance.example.com"
         signedAt: "2026-05-12T12:00:00.000Z"
         claims:
+          signed-at: "2026-05-12T12:00:00.000Z"
           ContentType: "Article"
           License: "CC-BY-4.0"
     expect:
       status: 201
       schema: ContentSignature
       body:
-        contentHash: "sha256:03-$run_nonce-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-        domain: "conformance.example.com"
+        contentHash: "sha256:xJTJYuXl1MuP1EjRLhKtgMUZvvc6qexrTMHyVnVL+Yc"
+        domain: "https://conformance.example.com"
         signature: $nonempty-string
         claims:
           ContentType: "Article"
@@ -56,9 +57,9 @@ steps:
       method: POST
       path: /content/verify
       body:
-        contentHash: "sha256:03-$run_nonce-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-        claimsHash: "sha256:03-claims-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-        domain: "conformance.example.com"
+        contentHash: "sha256:xJTJYuXl1MuP1EjRLhKtgMUZvvc6qexrTMHyVnVL+Yc"
+        claimsHash: "sha256:EOlXUVED7G9RI90/iTXXNtY79KQEW6LxLVOVtsjlHWs"
+        domain: "https://conformance.example.com"
         signedAt: "2026-05-12T12:00:00.000Z"
         authorId: $authorId
         signature: $signature

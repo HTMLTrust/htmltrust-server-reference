@@ -24,6 +24,7 @@
  */
 
 import { readFile, readdir } from "node:fs/promises";
+import { generateKeyPairSync, sign as cryptoSign } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve, join, basename } from "node:path";
 import YAML from "yaml";
@@ -464,6 +465,50 @@ async function loadFixtures(dir, only) {
   return fixtures;
 }
 
+// ---------- Endorsement signing --------------------------------------------
+
+/**
+ * RFC 8785 JSON Canonicalization Scheme, duplicated here on purpose: the
+ * runner has to be able to produce a valid endorsement signature for ANY
+ * target implementation, so it cannot import the implementation under test.
+ * Member names sort by UTF-16 code unit; strings and numbers use the
+ * ECMAScript JSON.stringify serialization JCS mandates.
+ */
+function canonicalizeJcs(value) {
+  if (value === null) return "null";
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error("JCS: non-finite number");
+    return JSON.stringify(value);
+  }
+  if (typeof value === "string") return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return `[${value.map((v) => (v === undefined ? "null" : canonicalizeJcs(v))).join(",")}]`;
+  }
+  if (typeof value === "object") {
+    const names = Object.keys(value)
+      .filter((n) => value[n] !== undefined)
+      .sort((a, b) => (a === b ? 0 : a < b ? -1 : 1));
+    return `{${names.map((n) => `${JSON.stringify(n)}:${canonicalizeJcs(value[n])}`).join(",")}}`;
+  }
+  throw new Error(`JCS: unsupported value of type ${typeof value}`);
+}
+
+/**
+ * Sign a request body as an HTMLTrust endorsement document (draft 10.2):
+ * ed25519 over JCS(document with `signature` omitted), carried as canonical
+ * unpadded Base64.
+ */
+function signEndorsementBody(body, privateKey) {
+  const document = { ...body };
+  delete document.signature;
+  const payload = canonicalizeJcs(document);
+  const signature = cryptoSign(null, Buffer.from(payload, "utf8"), privateKey)
+    .toString("base64")
+    .replace(/=+$/, "");
+  return { ...document, signature };
+}
+
 // ---------- HTTP helper ----------------------------------------------------
 
 async function performRequest({ targetUrl, basePath }, step, vars) {
@@ -473,6 +518,9 @@ async function performRequest({ targetUrl, basePath }, step, vars) {
   const url = `${targetUrl}${basePath}${path}`;
 
   const headers = { ...(req.headers || {}) };
+  if (req.sign === "endorsement") {
+    req.body = signEndorsementBody(req.body, vars.__signingKey.privateKey);
+  }
   let body;
   if (req.body !== undefined) {
     if (typeof req.body === "string") {
@@ -557,6 +605,30 @@ async function runStep(config, openapi, step, vars, opts, scenarioName) {
   if (step.capture) {
     for (const [varName, pathExpr] of Object.entries(step.capture)) {
       try {
+        // { header: "location", pattern: "..." } pulls a value out of a
+        // response header instead of the body. Servers that keep
+        // server-assigned identifiers out of the response body (so that a
+        // signed document is served back byte-for-byte) advertise them in
+        // Location, which is where an id has to come from.
+        if (pathExpr && typeof pathExpr === "object" && pathExpr.header) {
+          const raw = res.headers[String(pathExpr.header).toLowerCase()];
+          let value = raw;
+          if (raw !== undefined && pathExpr.pattern) {
+            const m = String(raw).match(new RegExp(pathExpr.pattern));
+            value = m ? (m[1] !== undefined ? m[1] : m[0]) : undefined;
+          }
+          if (value === undefined) {
+            return {
+              ok: false,
+              stepName,
+              errors: [`capture ${varName}: header "${pathExpr.header}" did not yield a value`],
+              response: res,
+            };
+          }
+          vars[varName] = value;
+          if (opts.verbose) console.error(`       captured ${varName}=${JSON.stringify(value)}`);
+          continue;
+        }
         let value = jsonPath(res.body, pathExpr);
         // Compatibility shim: when --accept-mongo-ids is set, fall back to
         // "_id" if the spec-style "id" sibling is missing. Lets fixtures be
@@ -588,10 +660,22 @@ async function runScenario(config, openapi, fixture, opts) {
   // Auto-injected per-run variables. `run_nonce` is unique per scenario run
   // so fixtures can construct unique names without clashing across runs.
   const runNonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  // A per-scenario ed25519 key pair. The runner keeps the private half, so a
+  // fixture can register the public key with the target and then produce
+  // genuinely valid endorsement signatures against it — which is the only way
+  // to exercise a directory that (correctly) refuses to store an endorsement
+  // it cannot verify.
+  const signingKey = generateKeyPairSync("ed25519", {
+    publicKeyEncoding: { type: "spki", format: "pem" },
+    privateKeyEncoding: { type: "pkcs8", format: "pem" },
+  });
   const vars = {
     generalApiKey: config.generalApiKey,
     adminApiKey: config.adminApiKey,
     run_nonce: runNonce,
+    baseUrl: `${config.targetUrl}${config.basePath}`,
+    signerPublicKeyPem: signingKey.publicKey,
+    __signingKey: signingKey,
     ...(fixture.doc.vars || {}),
   };
   const steps = fixture.doc.steps || [];

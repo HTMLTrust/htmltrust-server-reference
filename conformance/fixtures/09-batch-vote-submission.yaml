@@ -1,14 +1,19 @@
-# 09 — Batch vote submission
+# 09 — Vote submission and aggregate stats
 #
-# The current spec does not expose a single batch-vote endpoint, so this
-# fixture submits several votes sequentially against the same target and
-# then asserts the aggregate stats reflect every submission. This is the
-# closest single-implementation analogue to a batch endpoint until the
-# spec formalizes one.
-name: Submit several votes from distinct users and verify aggregate stats
+# Votes move a key's trust score, so the voter is derived from the
+# authenticated request rather than from a `userId` field in the body. A
+# caller holding only the shared submission key has no distinguishable
+# identity, so every such caller is one voter: repeated submissions replace
+# that voter's ballot instead of stacking. Distinct voters need distinct
+# identities, which means an RFC 9421 signature from a resolvable key.
+#
+# This fixture pins that behaviour — before it, naming a different `userId`
+# per request let a single key manufacture unlimited votes against a target.
+name: Vote submission is bound to the caller's identity
 description: |
-  Sequentially POSTs three TRUST votes and one DISTRUST vote from distinct
-  user IDs, then asserts the stats endpoint returns the expected counts.
+  POSTs several votes against one target from a single authenticated caller
+  and asserts the stats endpoint counts one ballot, not one per body-supplied
+  user id.
 steps:
   - name: Create author
     request:
@@ -24,7 +29,7 @@ steps:
     capture:
       authorId: $.author.id
 
-  - name: Vote 1 of 4 (TRUST)
+  - name: First vote (TRUST)
     request:
       method: POST
       path: /votes
@@ -37,7 +42,18 @@ steps:
         voteType: "TRUST"
     expect: { status: 201 }
 
-  - name: Vote 2 of 4 (TRUST)
+  - name: Aggregate stats after one vote
+    request:
+      method: GET
+      path: /votes/stats/AUTHOR/$authorId
+    expect:
+      status: 200
+      body:
+        trustCount: 1
+        distrustCount: 0
+        totalVotes: 1
+
+  - name: A second vote naming a different userId does not create a second ballot
     request:
       method: POST
       path: /votes
@@ -50,7 +66,7 @@ steps:
         voteType: "TRUST"
     expect: { status: 201 }
 
-  - name: Vote 3 of 4 (TRUST)
+  - name: Changing the vote type replaces the caller's ballot
     request:
       method: POST
       path: /votes
@@ -60,29 +76,16 @@ steps:
         userId: "batch-09-$run_nonce-3"
         targetType: "AUTHOR"
         targetId: $authorId
-        voteType: "TRUST"
-    expect: { status: 201 }
-
-  - name: Vote 4 of 4 (DISTRUST)
-    request:
-      method: POST
-      path: /votes
-      headers:
-        X-API-KEY: $generalApiKey
-      body:
-        userId: "batch-09-$run_nonce-4"
-        targetType: "AUTHOR"
-        targetId: $authorId
         voteType: "DISTRUST"
     expect: { status: 201 }
 
-  - name: Confirm aggregate stats reflect all four votes
+  - name: Confirm the caller still holds exactly one ballot
     request:
       method: GET
       path: /votes/stats/AUTHOR/$authorId
     expect:
       status: 200
       body:
-        trustCount: 3
+        trustCount: 0
         distrustCount: 1
-        totalVotes: 4
+        totalVotes: 1

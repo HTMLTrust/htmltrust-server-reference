@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+# Least privilege: this workflow only reads the repo and uploads artifacts.
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build & Verify
@@ -18,23 +22,36 @@ jobs:
           - 27017:27017
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "22"
 
-      - name: Configure private dep access
-        env:
-          TOKEN: ${{ secrets.HTMLTRUST_PKG_TOKEN }}
-        run: |
-          git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
-          git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "ssh://git@github.com/"
-
+      # The package token used to be written to ~/.gitconfig, where every later
+      # step -- including any dependency lifecycle script -- could read it back.
+      # It is now passed through GIT_CONFIG_* environment variables, which git
+      # honours for this process tree only and never persists to disk, and
+      # --ignore-scripts keeps third-party install hooks from running at all
+      # while the token is in the environment.
+      #
+      # HTMLTRUST_PKG_TOKEN must be a fine-grained PAT scoped to the
+      # HTMLTrust/htmltrust-canonicalization repository with Contents: Read and
+      # nothing else. A classic `repo`-scoped token grants write access to every
+      # repo the owner can reach and must not be used here.
       - name: Install dependencies
-        run: npm ci
+        env:
+          GIT_CONFIG_COUNT: "2"
+          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.HTMLTRUST_PKG_TOKEN }}@github.com/.insteadOf
+          GIT_CONFIG_VALUE_0: https://github.com/
+          GIT_CONFIG_KEY_1: url.https://x-access-token:${{ secrets.HTMLTRUST_PKG_TOKEN }}@github.com/.insteadOf
+          GIT_CONFIG_VALUE_1: ssh://git@github.com/
+        run: npm ci --ignore-scripts
+
+      - name: Run unit tests
+        run: npm test
 
       - name: Verify server starts
         env:
@@ -42,6 +59,7 @@ jobs:
           PORT: "3000"
           GENERAL_API_KEY: test_general_key
           ADMIN_API_KEY: test_admin_key
+          AUTHOR_API_KEY_PEPPER: test_pepper
           NODE_ENV: test
         run: |
           timeout 10 node src/server.js &
@@ -49,10 +67,21 @@ jobs:
           curl -sf http://localhost:3000/ > /dev/null && echo "Server started successfully"
           kill %1 2>/dev/null || true
 
+      - name: Run conformance suite
+        env:
+          MONGO_URI: mongodb://localhost:27017/htmltrust-conformance
+          GENERAL_API_KEY: conformance_general_key
+          ADMIN_API_KEY: conformance_admin_key
+          AUTHOR_API_KEY_PEPPER: conformance_pepper
+          NODE_ENV: test
+        run: |
+          npm --prefix conformance/runner ci
+          npm run conformance
+
       - name: Validate OpenAPI spec
         run: npx @redocly/cli lint openapi.yaml --skip-rule no-unused-components || true
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: server-package
           path: |
