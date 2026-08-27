@@ -7,6 +7,20 @@ name: Fetch reputation for an author's key
 description: |
   GET /directory/keys/{keyId}/reputation returns a KeyReputation envelope.
 steps:
+  - name: Fetch directory discovery document
+    request:
+      method: GET
+      path: /.well-known/htmltrust
+    expect:
+      status: 200
+      body:
+        version: "1"
+        capabilities:
+          content: true
+          endorsements: true
+          keys: true
+          reputation: true
+
   - name: Create author
     request:
       method: POST
@@ -39,6 +53,27 @@ steps:
     expect:
       status: 200
       schema: KeyReputation
+
+  - name: Fetch draft key document
+    request:
+      method: GET
+      path: /keys/$keyId
+    expect:
+      status: 200
+      body:
+        kid: $keyId
+        algorithm: "ed25519"
+        publicKey: $nonempty-string
+
+  - name: Fetch draft signer reputation
+    request:
+      method: GET
+      path: /signers/$keyId/reputation
+    expect:
+      status: 200
+      body:
+        keyid: $keyId
+        score: $number
 
   - name: Reputation for an unknown key returns 404
     request:

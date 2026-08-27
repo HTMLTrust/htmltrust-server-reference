@@ -32,11 +32,12 @@ steps:
       headers:
         X-AUTHOR-API-KEY: $authorApiKey
       body:
-        contentHash: "sha256:04-$run_nonce-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-        claimsHash: "sha256:04-claims-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-        domain: "retrieval.example.com"
+        contentHash: "sha256:82rHSQ/ThLduI0bbHYOVbxn5mEXR0FxMzn6YsVHSwSs"
+        claimsHash: "sha256:epUf+9l+yWgGFMHwNw++jCpep5Ib/f4T5dZBDO8nb5o"
+        domain: "https://retrieval.example.com"
         signedAt: "2026-05-12T12:00:00.000Z"
         claims:
+          signed-at: "2026-05-12T12:00:00.000Z"
           ContentType: "Article"
     expect:
       status: 201
@@ -44,7 +45,7 @@ steps:
   - name: Search the directory by content hash
     request:
       method: GET
-      path: "/directory/content?contentHash=sha256:04-$run_nonce-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      path: "/directory/content?contentHash=sha256:82rHSQ/ThLduI0bbHYOVbxn5mEXR0FxMzn6YsVHSwSs"
     expect:
       status: 200
       body:
@@ -54,6 +55,17 @@ steps:
           limit: $integer
           total: $integer
           pages: $integer
+
+  - name: Retrieve the draft content record by hash
+    request:
+      method: GET
+      path: "/content/sha256%3A82rHSQ%2FThLduI0bbHYOVbxn5mEXR0FxMzn6YsVHSwSs"
+    expect:
+      status: 200
+      body:
+        contentHash: "sha256:82rHSQ/ThLduI0bbHYOVbxn5mEXR0FxMzn6YsVHSwSs"
+        signers: $any
+        endorsementCount: $integer
 
   - name: Query occurrences for an unknown content hash returns 404
     request:

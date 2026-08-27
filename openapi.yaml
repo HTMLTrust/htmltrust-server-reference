@@ -26,6 +26,10 @@ tags:
     description: Operations for managing claim types and assertions
   - name: Directory
     description: Operations for the Network of Trust directory services
+  - name: Keys
+    description: Draft HTMLTrust key document lookup
+  - name: Signers
+    description: Draft signer reputation lookup
   - name: Endorsements
     description: |
       Operations for storing and retrieving third-party endorsements per
@@ -39,27 +43,99 @@ security:
 
 components:
   securitySchemes:
+    HttpMessageSignature:
+      type: http
+      scheme: signature
+      description: |
+        RFC 9421 HTTP Message Signature, the scheme draft §9.8 REQUIRES for
+        POST endpoints: "POST endpoints MUST be authenticated using HTTP
+        Message Signatures [RFC9421] with a key that the directory can resolve
+        via Section 8."
+
+        The request carries `Signature-Input` and `Signature` header fields.
+        The covered components MUST include the request target (`@method`
+        together with `@target-uri`, or `@request-target`), `host`, `date`,
+        and — for any request with a body — `content-digest` (RFC 9530). The
+        `keyid` signature parameter is resolved per draft §8 (DID, HTTPS key
+        document, or a directory `/keys/{id}` reference) and the signature is
+        verified against that key, so the authenticated identity is the key
+        itself rather than a shared secret.
+
+        Example:
+
+          Signature-Input: sig1=("@method" "@target-uri" "host" "date" \
+            "content-digest");created=1770000000;keyid="https://directory.example/api/keys/k-abc123"
+          Signature: sig1=:MEUCIQD...:
+
+        Failed verification returns 401 with a
+        `WWW-Authenticate: Signature realm="htmltrust-directory"` challenge
+        and an `application/problem+json` body.
+
     AuthorApiKey:
       type: apiKey
       in: header
       name: X-AUTHOR-API-KEY
-      description: API key linked to a specific author for author-specific operations
+      description: |
+        Supplementary scheme. API key linked to a specific author, used by the
+        directory's own convenience signing endpoint. It is a bearer secret,
+        not a resolvable identity, and is refused when NODE_ENV=production
+        unless HTMLTRUST_ALLOW_API_KEY_AUTH=1 is set.
 
     GeneralApiKey:
       type: apiKey
       in: header
       name: X-API-KEY
-      description: General API key for authenticated operations
+      description: |
+        Supplementary demo/admin scheme for submission endpoints. A shared
+        secret proves nothing about who submitted a record, so it cannot carry
+        the submitter identity the protocol depends on; prefer
+        HttpMessageSignature. Refused when NODE_ENV=production unless
+        HTMLTRUST_ALLOW_API_KEY_AUTH=1 is set.
 
     AdminApiKey:
       type: apiKey
       in: header
       name: X-ADMIN-API-KEY
-      description: Admin-level API key for administrative operations
+      description: Admin-level API key for directory-operator operations
 
   schemas:
+    Problem:
+      type: object
+      description: |
+        RFC 9457 problem details, the error format draft §9.9 requires. Served
+        as `application/problem+json`.
+      required:
+        - type
+        - title
+        - status
+      properties:
+        type:
+          type: string
+          description: URI identifying the problem type
+        title:
+          type: string
+          description: Short human-readable summary of the problem type
+        status:
+          type: integer
+          description: HTTP status code
+        detail:
+          type: string
+          description: Human-readable explanation specific to this occurrence
+        contentHash:
+          type: string
+          description: Present on submission errors that concern a specific content hash
+      example:
+        type: "https://htmltrust.org/errors/signature-invalid"
+        title: "Signature verification failed"
+        status: 400
+        detail: "The endorsement signature did not verify against the canonical JSON payload."
+
     Error:
       type: object
+      description: |
+        Legacy error envelope, still returned by endpoints outside the
+        authentication, endorsement, and content paths. New code should expect
+        `Problem`.
       required:
         - code
         - message
@@ -139,11 +215,11 @@ components:
           description: ID of the author this key belongs to
         key:
           type: string
-          description: The public key in PEM format
+          description: Legacy public key in PEM format
         algorithm:
           type: string
           description: The cryptographic algorithm used
-          enum: [RSA, ECDSA, ED25519]
+          enum: [RSA, ECDSA, ED25519, ed25519, ecdsa-p256, ecdsa-p384, rsa-pkcs1-sha256, rsa-pss-sha256]
         createdAt:
           type: string
           format: date-time
@@ -159,6 +235,107 @@ components:
         algorithm: "RSA"
         createdAt: "2023-01-01T12:00:00Z"
         expiresAt: "2024-01-01T12:00:00Z"
+
+    DirectoryDiscovery:
+      type: object
+      required: [directory, version, capabilities, supportedAlgorithms]
+      properties:
+        directory:
+          type: string
+          format: uri
+        version:
+          type: string
+        capabilities:
+          type: object
+          required: [content, endorsements, keys, reputation]
+          properties:
+            content: { type: boolean }
+            endorsements: { type: boolean }
+            keys: { type: boolean }
+            reputation: { type: boolean }
+        supportedAlgorithms:
+          type: object
+          properties:
+            signature:
+              type: array
+              items: { type: string }
+            hash:
+              type: array
+              items: { type: string }
+
+    KeyDocument:
+      type: object
+      required: [algorithm, publicKey]
+      properties:
+        kid:
+          type: string
+        algorithm:
+          type: string
+          enum: [ed25519, ecdsa-p256, ecdsa-p384, rsa-pss-sha256, rsa-pkcs1-sha256]
+        publicKey:
+          type: string
+          description: Canonical unpadded standard Base64 SPKI DER public key bytes.
+        publicKeyEncoding:
+          type: string
+          description: Reference-server extension describing how publicKey was derived from the stored PEM.
+        publicKeyPem:
+          type: string
+          description: Legacy PEM compatibility field.
+        expires:
+          type: string
+          format: date-time
+        revoked:
+          type: boolean
+
+    ContentRecord:
+      type: object
+      required: [contentHash, firstSeen, signers, endorsementCount]
+      properties:
+        contentHash:
+          type: string
+          description: Hash with algorithm prefix and canonical unpadded standard Base64 digest.
+        firstSeen:
+          type: string
+          format: date-time
+        signers:
+          type: array
+          items:
+            type: object
+            required: [keyid, signedAt, domain, signature]
+            properties:
+              keyid:
+                type: string
+              signedAt:
+                type: string
+                format: date-time
+              domain:
+                type: string
+                description: Serialized Web origin, not a bare hostname.
+              signature:
+                type: string
+                description: Canonical unpadded standard Base64 signature.
+        endorsementCount:
+          type: integer
+
+    SignerReputation:
+      type: object
+      required: [keyid, score, asOf, components]
+      properties:
+        keyid:
+          type: string
+        score:
+          type: number
+          minimum: 0
+          maximum: 1
+        asOf:
+          type: string
+          format: date-time
+        components:
+          type: array
+          items: { type: string }
+        methodology:
+          type: string
+          format: uri
 
     Claim:
       type: object
@@ -202,24 +379,40 @@ components:
       type: object
       required:
         - contentHash
+        - claimsHash
+        - signedAt
         - domain
         - authorId
+        - keyid
+        - algorithm
         - signature
         - claims
       properties:
         contentHash:
           type: string
-          description: Hash of the normalized content
+          description: Hash of the normalized content using canonical unpadded standard Base64
+        claimsHash:
+          type: string
+          description: Hash of all direct child meta claims using the same hash algorithm as contentHash
+        signedAt:
+          type: string
+          description: UTC RFC3339 timestamp from the direct child signed-at claim
         domain:
           type: string
-          description: Domain associated with the content
+          description: Serialized Web origin associated with the content, not a bare hostname
         authorId:
           type: string
           format: uuid
           description: ID of the author who signed the content
+        keyid:
+          type: string
+          description: Resolvable identifier for the signing key
+        algorithm:
+          type: string
+          description: Signature algorithm identifier from the registry
         signature:
           type: string
-          description: Cryptographic signature binding content, hash, domain, and author key
+          description: Canonical unpadded standard Base64 signature over contentHash:claimsHash:domain:signedAt
         claims:
           type: object
           description: Claims about the content
@@ -229,9 +422,13 @@ components:
           format: date-time
           description: Creation timestamp
       example:
-        contentHash: "sha256:a591a6d40bf420404a011733cfb7b190d62c65bf0bcda32b57b277d9ad9f146e"
-        domain: "example.com"
+        contentHash: "sha256:RAyBCvKTW5KNnGZSyXZYe+8V8DEEnUMRxjk5LSgCHo4"
+        claimsHash: "sha256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU"
+        signedAt: "2026-05-01T10:30:00Z"
+        domain: "https://example.com"
         authorId: "123e4567-e89b-12d3-a456-426614174000"
+        keyid: "https://directory.example/api/keys/123e4567-e89b-12d3-a456-426614174001"
+        algorithm: "ed25519"
         signature: "MEUCIQD7y5SxmQJ9f0lE9B0BwqIJKKdL5fZMNQOiPnKWUJfmrgIgEbHtPwDxM9xGbCZzW9k2R9jFxwJZQQlPfhgj+0YP7vQ="
         claims:
           ContentType: "Article"
@@ -313,58 +510,276 @@ components:
     Endorsement:
       type: object
       description: |
-        A standalone signed endorsement of a specific content hash, per
-        HTMLTrust spec §2.5. Verification is performed locally by the
-        client; the directory is a passive store.
+        A standalone signed endorsement document per draft §10.1.
+
+        The directory verifies the endorser's signature over
+        JCS(document minus `signature`) before storing it (§9.7), and serves
+        the document back byte-for-byte as submitted. It adds no members of
+        its own: §10.1 requires unrecognised members to be preserved and
+        included in the signed payload, so an injected `_id`, `createdAt`, or
+        `contentHash` alias would invalidate the endorser's signature for
+        anyone who recomputes it. The server-assigned identifier is returned
+        in the `Location` header of the 201 response instead.
+
+        Additional members not listed here MAY be present and are preserved.
       required:
         - endorser
-        - contentHash
+        - endorsement
+        - algorithm
         - signature
         - timestamp
       properties:
-        _id:
-          type: string
-          description: Server-assigned identifier
         endorser:
           type: string
-          description: Opaque endorser keyid (e.g. "did:web:publisher.org")
-        contentHash:
+          description: Endorser keyid, resolvable per draft §8 (e.g. "did:web:publisher.org")
+        endorsement:
           type: string
-          description: The targeted content hash (e.g. "sha256:...")
+          description: Content hash being endorsed, including algorithm prefix
         signature:
           type: string
-          description: Base64 signature over "{contentHash}:{timestamp}"
+          description: Canonical unpadded standard Base64 signature over JCS(document with signature omitted)
         timestamp:
           type: string
-          description: ISO-8601 timestamp at which the endorsement was issued
+          description: RFC 3339 UTC timestamp at which the endorsement was issued
         algorithm:
           type: string
-          description: Signature algorithm (default ed25519)
+          description: Signature algorithm identifier from draft §7.1
           default: ed25519
-        rawBlob:
+        claim:
           type: string
+          description: Free-text human-readable rationale for the endorsement
+        expires:
+          type: string
+          description: RFC 3339 UTC timestamp after which the endorsement is no longer valid
+        revokedBy:
+          type: string
+          description: Content hash of the document that supersedes this one
+        contentHash:
+          type: string
+          deprecated: true
           description: |
-            The exact bytes that were signed. Clients SHOULD use this for
-            byte-identical re-verification.
-        createdAt:
-          type: string
-          format: date-time
-          description: When the endorsement was stored by this directory
+            Legacy alias for `endorsement`. Only present on documents stored
+            before the directory began serving submissions verbatim; new
+            submissions are served exactly as signed.
       example:
         endorser: "did:web:publisher.org"
-        contentHash: "sha256:RAyBCvKTW5KNnGZSyXZYe+8V8DEEnUMRxjk5LSgCHo4"
+        endorsement: "sha256:RAyBCvKTW5KNnGZSyXZYe+8V8DEEnUMRxjk5LSgCHo4"
         signature: "BASE64_SIG"
         timestamp: "2025-05-01T00:00:00Z"
         algorithm: "ed25519"
-        rawBlob: "{\"endorser\":\"did:web:publisher.org\",\"endorsement\":\"sha256:RAyBCvKTW5KNnGZSyXZYe+8V8DEEnUMRxjk5LSgCHo4\",\"signature\":\"BASE64_SIG\",\"timestamp\":\"2025-05-01T00:00:00Z\"}"
 
 paths:
+  /.well-known/htmltrust:
+    get:
+      tags:
+        - Directory
+      summary: Discover trust directory capabilities
+      operationId: discoverDirectory
+      responses:
+        "200":
+          description: Directory discovery document
+          content:
+            application/htmltrust-directory+json:
+              schema:
+                $ref: "#/components/schemas/DirectoryDiscovery"
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DirectoryDiscovery"
+
+  /keys/{id}:
+    get:
+      tags:
+        - Keys
+      summary: Retrieve a draft HTMLTrust key document
+      operationId: getKeyDocument
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Key document
+          content:
+            application/htmltrust-key+json:
+              schema:
+                $ref: "#/components/schemas/KeyDocument"
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KeyDocument"
+        "404":
+          description: Key not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /signers/{id}/reputation:
+    get:
+      tags:
+        - Signers
+      summary: Retrieve directory-computed signer reputation
+      operationId: getSignerReputation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Directory key id, author id, or percent-encoded keyid.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Signer reputation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignerReputation"
+        "404":
+          description: Signer not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /content:
+    post:
+      tags:
+        - Content
+      summary: Submit a signed content occurrence for indexing
+      description: |
+        Draft directory submission endpoint. The directory re-verifies the
+        submitted signature over `contentHash:claimsHash:domain:signedAt`.
+        `domain` is a serialized Web origin. `claimsHash` may be supplied by
+        clients that already computed the canonical direct-child meta claims
+        hash; otherwise the directory derives it from the submitted `claims`
+        array using the draft §4.6 canonical claims serialization (normalized
+        name/content pairs, sorted by the UTF-8 bytes of the normalized name).
+      operationId: submitContent
+      security:
+        - HttpMessageSignature: []
+        - GeneralApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [contentHash, keyid, signedAt, domain, signature, sourceURL]
+              properties:
+                contentHash:
+                  type: string
+                claimsHash:
+                  type: string
+                keyid:
+                  type: string
+                signedAt:
+                  type: string
+                  format: date-time
+                domain:
+                  type: string
+                  description: Serialized Web origin, not a bare hostname.
+                signature:
+                  type: string
+                  description: Canonical unpadded standard Base64 signature.
+                sourceURL:
+                  type: string
+                  format: uri
+                claims:
+                  type: array
+                  items:
+                    type: object
+                    required: [name, content]
+                    properties:
+                      name: { type: string }
+                      content: { type: string }
+      responses:
+        "201":
+          description: Content record created
+          content:
+            application/htmltrust-content+json:
+              schema:
+                $ref: "#/components/schemas/ContentRecord"
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentRecord"
+        "400":
+          description: Invalid submission
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /content/{hash}:
+    get:
+      tags:
+        - Content
+      summary: Retrieve a draft content record by content hash
+      operationId: getContentRecord
+      parameters:
+        - name: hash
+          in: path
+          required: true
+          description: Percent-encoded content hash including algorithm prefix.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Content record
+          content:
+            application/htmltrust-content+json:
+              schema:
+                $ref: "#/components/schemas/ContentRecord"
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentRecord"
+        "404":
+          description: Content not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /content/{hash}/endorsements:
+    get:
+      tags:
+        - Endorsements
+      summary: List draft structured endorsements for a content hash
+      operationId: listContentEndorsements
+      parameters:
+        - name: hash
+          in: path
+          required: true
+          description: Percent-encoded content hash including algorithm prefix.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Structured endorsement documents
+          content:
+            application/htmltrust-endorsement+json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Endorsement"
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Endorsement"
+
   /authors:
     post:
       tags:
         - Authors
       summary: Create a new author and key pair
-      description: Creates a new author profile and generates a key pair. The private key is stored securely and never exposed.
+      description: |
+        Creates a new author profile. If `publicKey` is supplied, the
+        directory registers that key and never holds the private half; the
+        author signs its own content and submits it to POST /content.
+        Otherwise the directory acts as the convenience registry of draft §9.6
+        and generates the key pair itself, in which case the private key is
+        stored and never exposed.
       operationId: createAuthor
       security:
         - GeneralApiKey: []
@@ -394,9 +809,16 @@ paths:
                   description: Type of the author key
                 keyAlgorithm:
                   type: string
-                  enum: [RSA, ECDSA, ED25519]
+                  enum: [RSA, ECDSA, ED25519, ed25519, ecdsa-p256, ecdsa-p384, rsa-pkcs1-sha256, rsa-pss-sha256]
                   default: RSA
                   description: The cryptographic algorithm to use for the key pair
+                publicKey:
+                  type: string
+                  description: |
+                    Optional SPKI PEM public key the author already holds.
+                    When present the directory stores no private key for this
+                    author, so POST /content/sign is unavailable to it and the
+                    author signs locally instead.
       responses:
         "201":
           description: Author created successfully
@@ -652,7 +1074,11 @@ paths:
       tags:
         - Content
       summary: Sign content
-      description: Signs content with the author's private key
+      description: |
+        Compatibility signing helper. The client submits already-computed
+        `contentHash` and `claimsHash` values; the server signs the draft
+        payload `contentHash:claimsHash:domain:signedAt`. `claimsHash` is the
+        hash of all direct child `meta` claims, including `signed-at`.
       operationId: signContent
       security:
         - AuthorApiKey: []
@@ -664,18 +1090,27 @@ paths:
               type: object
               required:
                 - contentHash
+                - claimsHash
                 - domain
+                - signedAt
                 - claims
               properties:
                 contentHash:
                   type: string
-                  description: Hash of the normalized content
+                  description: Hash of the normalized content using canonical unpadded standard Base64
+                claimsHash:
+                  type: string
+                  description: Hash of all direct child meta claims using canonical unpadded standard Base64
                 domain:
                   type: string
-                  description: Domain associated with the content
+                  description: Serialized Web origin associated with the content, not a bare hostname
+                signedAt:
+                  type: string
+                  format: date-time
+                  description: UTC RFC3339 timestamp from the direct child signed-at claim
                 claims:
                   type: object
-                  description: Claims about the content
+                  description: Direct child meta claims about the content; every such claim participates in claimsHash.
                   additionalProperties: true
       responses:
         "201":
@@ -718,16 +1153,24 @@ paths:
               type: object
               required:
                 - contentHash
+                - claimsHash
                 - domain
+                - signedAt
                 - authorId
                 - signature
               properties:
                 contentHash:
                   type: string
-                  description: Hash of the normalized content
+                  description: Hash of the normalized content using canonical unpadded standard Base64
+                claimsHash:
+                  type: string
+                  description: Hash of all direct child meta claims
                 domain:
                   type: string
-                  description: Domain associated with the content
+                  description: Serialized Web origin associated with the content, not a bare hostname
+                signedAt:
+                  type: string
+                  format: date-time
                 authorId:
                   type: string
                   format: uuid
@@ -1310,12 +1753,13 @@ paths:
         - Endorsements
       summary: Submit a signed endorsement for storage
       description: |
-        Stores a signed endorsement blob. The directory MAY opportunistically
-        verify the signature against any locally-known public key for the
-        endorser as a sanity check, but storage does not depend on
-        verification — clients verify locally per spec §2.5.
+        Stores a structured endorsement document. The signed payload is the
+        JSON canonicalization of the endorsement document with `signature`
+        omitted. The legacy `contentHash` field is accepted as an alias for
+        the draft `endorsement` field.
       operationId: createEndorsement
       security:
+        - HttpMessageSignature: []
         - GeneralApiKey: []
       requestBody:
         required: true
@@ -1325,19 +1769,23 @@ paths:
               type: object
               required:
                 - endorser
-                - contentHash
+                - endorsement
+                - algorithm
                 - signature
                 - timestamp
               properties:
                 endorser:
                   type: string
                   description: Opaque endorser keyid (e.g. "did:web:publisher.org")
+                endorsement:
+                  type: string
+                  description: Draft field for the targeted content hash (e.g. "sha256:...")
                 contentHash:
                   type: string
-                  description: The targeted content hash (e.g. "sha256:...")
+                  description: Legacy alias for endorsement
                 signature:
                   type: string
-                  description: Base64 signature over "{contentHash}:{timestamp}"
+                  description: Canonical unpadded standard Base64 signature over JCS(document with signature omitted)
                 timestamp:
                   type: string
                   description: ISO-8601 timestamp at which the endorsement was issued
@@ -1384,7 +1832,8 @@ paths:
         endorsement's `endorser` keyid.
       operationId: deleteEndorsement
       security:
-        - GeneralApiKey: []
+        - HttpMessageSignature: []
+        - AdminApiKey: []
       parameters:
         - name: id
           in: path

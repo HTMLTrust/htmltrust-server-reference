@@ -1,159 +1,216 @@
+const crypto = require('crypto');
 const Endorsement = require('../models/Endorsement');
-const Author = require('../models/Author');
-const Key = require('../models/Key');
 const { verifySignature } = require('../utils/crypto');
+const {
+  assertContentHash,
+  assertRfc3339Utc,
+  assertSignatureAlgorithm,
+  canonicalizeEndorsement,
+  decodeCanonicalBase64,
+  detailFor,
+  invalid,
+  problem,
+} = require('../utils/htmltrustProtocol');
+const { canonicalizeJcs } = require('../utils/jcs');
+const { resolveUsableKey, sameKeyMaterial } = require('../utils/keyResolution');
+const { hasAdminApiKey } = require('../middleware/auth');
 
 /**
- * Build the canonical rawBlob for an endorsement when the client did not
- * supply one. The wire format follows the example in spec §2.5:
+ * Return the stored endorsement document exactly as it was submitted.
  *
- *   {
- *     "endorser": "did:web:publisher.org",
- *     "endorsement": "sha256-XYZ",
- *     "signature": "BASE64_SIG",
- *     "timestamp": "2025-05-01T00:00Z"
- *   }
+ * Draft §9.5: "The directory MUST NOT alter the endorsement payloads in a
+ * manner that invalidates the endorser's signature", and §10.1 requires
+ * unrecognised members to be preserved and included in the signed payload.
+ * Any member the directory adds — an `_id`, a `createdAt`, a `contentHash`
+ * alias — becomes part of JCS(document minus signature) for anyone who
+ * recomputes it, and the signature no longer verifies.
  *
- * Keys are emitted in a stable order (endorser, endorsement, signature,
- * timestamp, algorithm) so any verifier that reconstructs the blob from
- * structured fields produces the same bytes. The optional `algorithm` field
- * is omitted when it equals the default 'ed25519' to match the spec example.
- *
- * NOTE: clients SHOULD post their own rawBlob to avoid any ambiguity. This
- * fallback exists for convenience only.
+ * Server-side bookkeeping is therefore kept out of the body entirely: the
+ * identifier of a newly stored endorsement is returned in the `Location`
+ * header of the 201 response.
  */
-const buildCanonicalBlob = ({ endorser, contentHash, signature, timestamp, algorithm }) => {
-  const obj = {
-    endorser,
-    endorsement: contentHash,
-    signature,
-    timestamp
+const toEndorsementDocument = (endorsement) => {
+  if (endorsement.document && typeof endorsement.document === 'object') {
+    return endorsement.document;
+  }
+  // Rows written before structured documents were stored: reconstruct the
+  // draft shape from the indexed columns.
+  const document = {
+    endorser: endorsement.endorser,
+    endorsement: endorsement.endorsement || endorsement.contentHash,
+    algorithm: endorsement.algorithm,
+    timestamp: endorsement.timestamp,
+    signature: endorsement.signature,
   };
-  if (algorithm && algorithm.toLowerCase() !== 'ed25519') {
-    obj.algorithm = algorithm;
-  }
-  return JSON.stringify(obj);
+  if (endorsement.claim) document.claim = endorsement.claim;
+  if (endorsement.expires) document.expires = endorsement.expires;
+  if (endorsement.revokedBy) document.revokedBy = endorsement.revokedBy;
+  return document;
 };
 
 /**
- * Best-effort, opportunistic verification of an endorsement's signature.
- *
- * The directory does NOT have authoritative knowledge of every endorser's
- * public key — endorser keyids are opaque strings that clients resolve
- * locally. As a sanity check, we attempt to find a matching Author/Key pair
- * by treating the endorser string as either an Author._id or as a name. If
- * no match is found, we silently store the endorsement as-is; clients verify
- * locally per spec §2.5.
- *
- * Returns true if verification succeeded, false if it failed, or null if no
- * key was available to attempt verification.
+ * Validate a submitted endorsement document against draft §10.1 WITHOUT
+ * changing it. The returned object is the same object graph that will be
+ * canonicalized, verified, and stored, so nothing may be injected into it:
+ * every added member changes the signing payload.
  */
-const tryVerify = async ({ endorser, contentHash, timestamp, signature, algorithm }) => {
-  let key = null;
-  try {
-    // Look for an Author whose _id or name matches the endorser string.
-    let author = null;
-    if (/^[0-9a-fA-F]{24}$/.test(endorser)) {
-      author = await Author.findById(endorser);
-    }
-    if (!author) {
-      author = await Author.findOne({ name: endorser });
-    }
-    if (!author) return null;
+const validateEndorsementDocument = (body) => {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw invalid('The endorsement document must be a JSON object');
+  }
+  const document = { ...body };
 
-    key = await Key.findOne({ authorId: author._id });
-    if (!key) return null;
-  } catch (err) {
-    return null;
+  // `rawBlob` is a legacy compatibility field that was never part of the
+  // signed document; strip it before verification so old clients that still
+  // send it do not fail, and keep it out of storage.
+  delete document.rawBlob;
+
+  for (const field of ['endorser', 'endorsement', 'signature', 'timestamp']) {
+    if (typeof document[field] !== 'string' || document[field].length === 0) {
+      throw invalid(`${field} is required`);
+    }
+  }
+  if (typeof document.algorithm !== 'string' || document.algorithm.length === 0) {
+    throw invalid('algorithm is required');
   }
 
-  try {
-    const binding = `${contentHash}:${timestamp}`;
-    return verifySignature(binding, signature, key.publicKey, key.algorithm || algorithm);
-  } catch (err) {
-    return false;
+  assertContentHash(document.endorsement, 'endorsement');
+  assertSignatureAlgorithm(document.algorithm);
+  assertRfc3339Utc(document.timestamp, 'timestamp');
+  decodeCanonicalBase64(document.signature, 'signature');
+  if (document.expires !== undefined) assertRfc3339Utc(document.expires, 'expires');
+  if (document.revokedBy !== undefined) assertContentHash(document.revokedBy, 'revokedBy');
+  if (document.claim !== undefined && typeof document.claim !== 'string') {
+    throw invalid('claim must be a string');
   }
+
+  return document;
+};
+
+const documentHashFor = (document) =>
+  `sha256:${crypto.createHash('sha256').update(canonicalizeJcs(document)).digest('base64').replace(/=+$/, '')}`;
+
+/**
+ * Verify the endorser's signature over JCS(document minus `signature`), per
+ * draft §10.2.
+ *
+ * Verification is mandatory. A directory that stores endorsements it cannot
+ * verify is a publication channel for forged attestations: anyone can claim
+ * any endorser's identity, and every consumer that trusts the directory's
+ * index (rather than re-verifying) inherits the forgery. Draft §9.7 states
+ * the requirement directly — the directory MUST verify the endorser's
+ * signature, and invalid signatures MUST be rejected with 400.
+ *
+ * @returns {Promise<{ok: true} | {ok: false, status: number, title: string, detail: string, type?: string}>}
+ */
+const verifyEndorsementSignature = async (document, req) => {
+  const resolution = await resolveUsableKey(document.endorser, { req });
+  if (!resolution.ok) {
+    return {
+      ok: false,
+      status: 400,
+      title: 'Key resolution failed',
+      detail:
+        resolution.reason === 'key-resolution-failed'
+          ? 'The endorser keyid could not be resolved to a public key this directory can verify against'
+          : `The endorser key is not usable (${resolution.reason})`,
+      type: `https://htmltrust.org/errors/${resolution.reason}`,
+      resolved: resolution.resolved,
+    };
+  }
+
+  const { resolved } = resolution;
+  if (resolved.algorithm !== document.algorithm) {
+    return {
+      ok: false,
+      status: 400,
+      title: 'Algorithm mismatch',
+      detail: `The endorsement declares ${document.algorithm} but the resolved key is ${resolved.algorithm}`,
+      type: 'https://htmltrust.org/errors/algorithm-mismatch',
+    };
+  }
+
+  const payload = canonicalizeEndorsement(document);
+  if (!verifySignature(payload, document.signature, resolved.publicKeyPem, resolved.algorithm)) {
+    return {
+      ok: false,
+      status: 400,
+      title: 'Signature verification failed',
+      detail: 'The endorsement signature did not verify against the canonical JSON payload.',
+      type: 'https://htmltrust.org/errors/signature-invalid',
+    };
+  }
+
+  return { ok: true, resolved };
 };
 
 /**
- * @desc    Create (or upsert) an endorsement
+ * @desc    Create an endorsement
  * @route   POST /api/endorsements
- * @access  Private (General API Key)
+ * @access  Private (RFC 9421 signature, or the demo API key scheme)
  *
- * Request body fields (all required unless noted):
- *   - endorser:    string (opaque keyid)
- *   - contentHash: string (e.g. "sha256:...")
- *   - signature:   string (base64)
- *   - timestamp:   string (ISO-8601)
- *   - algorithm:   string (optional, default 'ed25519')
- *   - rawBlob:     string (optional; the exact bytes the client signed over.
- *                  If omitted, the server constructs a canonical blob in a
- *                  stable key order. Clients SHOULD post their own rawBlob.)
+ * Request body is an endorsement document per draft §10.1:
+ *   - endorser:    string (keyid resolvable per §8)
+ *   - endorsement: string (content hash, e.g. "sha256:...")
+ *   - signature:   string (unpadded Base64 over JCS(document minus signature))
+ *   - algorithm:   string (§7.1 identifier)
+ *   - timestamp:   string (RFC 3339 UTC)
+ *   - claim, expires, revokedBy and any additional members: optional, stored
+ *     and served verbatim.
  */
 exports.createEndorsement = async (req, res) => {
+  let document;
   try {
-    const { endorser, contentHash, signature, timestamp } = req.body;
-    const algorithm = req.body.algorithm || 'ed25519';
-    let { rawBlob } = req.body;
-
-    if (!endorser || !contentHash || !signature || !timestamp) {
-      return res.status(400).json({
-        code: 'BAD_REQUEST',
-        message: 'endorser, contentHash, signature, and timestamp are required'
-      });
-    }
-
-    if (!rawBlob) {
-      rawBlob = buildCanonicalBlob({ endorser, contentHash, signature, timestamp, algorithm });
-    }
-
-    // Opportunistic sanity check — does NOT block storage. Clients verify
-    // locally per spec §2.5.
-    const verifyResult = await tryVerify({ endorser, contentHash, timestamp, signature, algorithm });
-    if (verifyResult === false) {
-      console.warn(
-        `Endorsement signature failed opportunistic verification: endorser=${endorser} contentHash=${contentHash}`
-      );
-    }
-
-    // Upsert: a given endorser may only have one endorsement per content
-    // hash. Resubmissions overwrite.
-    let endorsement = await Endorsement.findOne({ endorser, contentHash });
-    if (endorsement) {
-      endorsement.signature = signature;
-      endorsement.timestamp = timestamp;
-      endorsement.algorithm = algorithm;
-      endorsement.rawBlob = rawBlob;
-      await endorsement.save();
-    } else {
-      endorsement = await Endorsement.create({
-        endorser,
-        contentHash,
-        signature,
-        timestamp,
-        algorithm,
-        rawBlob
-      });
-    }
-
-    res.status(201).json({
-      _id: endorsement._id,
-      endorser: endorsement.endorser,
-      contentHash: endorsement.contentHash,
-      signature: endorsement.signature,
-      timestamp: endorsement.timestamp,
-      algorithm: endorsement.algorithm,
-      rawBlob: endorsement.rawBlob,
-      createdAt: endorsement.createdAt,
-      // Expose the opportunistic verification result for diagnostics. Clients
-      // MUST NOT rely on this — they verify locally per spec §2.5.
-      opportunisticallyVerified: verifyResult
+    document = validateEndorsementDocument(req.body);
+  } catch (error) {
+    return problem(res, 400, 'Invalid endorsement', detailFor(error, 'The endorsement document is not valid'), {
+      type: 'https://htmltrust.org/errors/endorsement-invalid',
     });
+  }
+
+  try {
+    const verification = await verifyEndorsementSignature(document, req);
+    if (!verification.ok) {
+      return problem(res, verification.status, verification.title, verification.detail, {
+        type: verification.type,
+        contentHash: document.endorsement,
+      });
+    }
+
+    const documentHash = documentHashFor(document);
+
+    // Append-only with idempotent resubmission. A second, different document
+    // from the same endorser for the same content hash (a revocation, an
+    // updated claim) is stored alongside the first: draft §10.3 requires a
+    // directory holding both to serve both.
+    let stored = await Endorsement.findOne({ documentHash });
+    let created = false;
+    if (!stored) {
+      stored = await Endorsement.create({
+        endorser: document.endorser,
+        endorsement: document.endorsement,
+        contentHash: document.endorsement,
+        signature: document.signature,
+        timestamp: document.timestamp,
+        algorithm: document.algorithm,
+        claim: document.claim,
+        expires: document.expires,
+        revokedBy: document.revokedBy,
+        document,
+        documentHash,
+      });
+      created = true;
+    }
+
+    return res
+      .status(created ? 201 : 200)
+      .location(`/api/endorsements/${stored._id}`)
+      .type('application/htmltrust-endorsement+json')
+      .json(toEndorsementDocument(stored));
   } catch (error) {
     console.error('Create endorsement error:', error);
-    res.status(400).json({
-      code: 'BAD_REQUEST',
-      message: error.message
+    return problem(res, 400, 'Invalid endorsement', detailFor(error, 'The endorsement could not be stored'), {
+      type: 'https://htmltrust.org/errors/endorsement-invalid',
     });
   }
 };
@@ -166,70 +223,81 @@ exports.createEndorsement = async (req, res) => {
 exports.listEndorsements = async (req, res) => {
   try {
     // Accept both kebab-case (spec-style) and camelCase query parameters.
-    const contentHash = req.query['content-hash'] || req.query.contentHash;
+    const contentHash = req.query['content-hash'] || req.query.contentHash || req.query.endorsement;
 
     if (!contentHash) {
-      return res.status(400).json({
-        code: 'BAD_REQUEST',
-        message: 'content-hash query parameter is required'
-      });
+      return problem(res, 400, 'Invalid request', 'content-hash query parameter is required');
     }
 
-    const endorsements = await Endorsement.find({ contentHash }).sort({ createdAt: -1 });
+    const endorsementHash = assertContentHash(String(contentHash), 'content-hash');
+    const endorsements = await Endorsement.find({
+      $or: [{ endorsement: endorsementHash }, { contentHash: endorsementHash }]
+    }).sort({ createdAt: -1 });
 
-    res.status(200).json(
-      endorsements.map((e) => ({
-        _id: e._id,
-        endorser: e.endorser,
-        contentHash: e.contentHash,
-        signature: e.signature,
-        timestamp: e.timestamp,
-        algorithm: e.algorithm,
-        rawBlob: e.rawBlob,
-        createdAt: e.createdAt
-      }))
-    );
+    return res
+      .type('application/htmltrust-endorsement+json')
+      .status(200)
+      .json(endorsements.map(toEndorsementDocument));
   } catch (error) {
     console.error('List endorsements error:', error);
-    res.status(400).json({
-      code: 'BAD_REQUEST',
-      message: error.message
-    });
+    return problem(res, 400, 'Invalid content hash', detailFor(error, 'The content-hash parameter is not valid'));
   }
 };
+
+exports.toEndorsementDocument = toEndorsementDocument;
 
 /**
  * @desc    Delete an endorsement
  * @route   DELETE /api/endorsements/:id
- * @access  Private (General API Key)
+ * @access  The endorser (RFC 9421 signature) or the directory operator
  *
- * MVP: gated behind the existing API key auth only. A production deployment
- * MUST additionally verify that the caller's authenticated identity matches
- * the endorsement's `endorser` keyid (e.g. by requiring a signed delete
- * request, or by tying the API key to a specific keyid).
+ * Deletion is a compatibility operation; the protocol's own mechanism for
+ * withdrawing an endorsement is a revocation endorsement (draft §10.3), which
+ * is served alongside the original rather than replacing it.
  *
- * TODO: enforce caller-keyid match against endorsement.endorser before
- * permitting deletion.
+ * Authorization is by key, not by API key: the caller must sign the DELETE
+ * with the endorsement's own endorser key (compared on the resolved key
+ * material, so an alias keyid still matches), or present the directory admin
+ * key for an operator takedown. Any holder of the shared submission key being
+ * able to delete anyone's endorsements is a censorship primitive.
  */
 exports.deleteEndorsement = async (req, res) => {
   try {
     const endorsement = await Endorsement.findById(req.params.id);
 
     if (!endorsement) {
-      return res.status(404).json({
-        code: 'NOT_FOUND',
-        message: 'Endorsement not found'
-      });
+      return problem(res, 404, 'Endorsement not found', 'No endorsement exists with the requested id');
+    }
+
+    if (!hasAdminApiKey(req)) {
+      const actor = req.htmltrustActor;
+      if (!actor) {
+        res.set('WWW-Authenticate', 'Signature realm="htmltrust-directory"');
+        return problem(
+          res,
+          401,
+          'Unauthorized',
+          'Deleting an endorsement requires an RFC 9421 signature from the endorser key, or the directory admin key',
+          { type: 'https://htmltrust.org/errors/unauthorized' },
+        );
+      }
+
+      const endorserKey = await resolveUsableKey(endorsement.endorser, { req });
+      const sameKeyid = actor.keyid === endorsement.endorser;
+      const sameMaterial =
+        endorserKey.ok && sameKeyMaterial(actor.resolved.publicKeyPem, endorserKey.resolved.publicKeyPem);
+      if (!sameKeyid && !sameMaterial) {
+        return problem(res, 403, 'Forbidden', 'Only the endorser may delete this endorsement', {
+          type: 'https://htmltrust.org/errors/forbidden',
+        });
+      }
     }
 
     await Endorsement.deleteOne({ _id: endorsement._id });
 
-    res.status(204).send();
+    return res.status(204).send();
   } catch (error) {
     console.error('Delete endorsement error:', error);
-    res.status(400).json({
-      code: 'BAD_REQUEST',
-      message: error.message
-    });
+    return problem(res, 400, 'Invalid request', detailFor(error, 'The endorsement could not be deleted'));
   }
 };

@@ -19,7 +19,7 @@ steps:
         description: "Should fail"
     expect:
       status: 401
-      schema: Error
+      schema: Problem
 
   - name: Create claim type as admin
     request:

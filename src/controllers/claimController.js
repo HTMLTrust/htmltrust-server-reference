@@ -1,4 +1,5 @@
 const Claim = require("../models/Claim");
+const { detailFor } = require("../utils/htmltrustProtocol");
 
 /**
  * @desc    Create a new claim type
@@ -31,7 +32,7 @@ exports.createClaimType = async (req, res) => {
     console.error("Create claim type error:", error);
     res.status(400).json({
       code: "BAD_REQUEST",
-      message: error.message,
+      message: detailFor(error),
     });
   }
 };
@@ -70,7 +71,7 @@ exports.getClaimTypes = async (req, res) => {
     console.error("Get claim types error:", error);
     res.status(500).json({
       code: "SERVER_ERROR",
-      message: error.message,
+      message: detailFor(error),
     });
   }
 };
@@ -96,7 +97,7 @@ exports.getClaimType = async (req, res) => {
     console.error("Get claim type error:", error);
     res.status(500).json({
       code: "SERVER_ERROR",
-      message: error.message,
+      message: detailFor(error),
     });
   }
 };
@@ -132,7 +133,7 @@ exports.updateClaimType = async (req, res) => {
     console.error("Update claim type error:", error);
     res.status(400).json({
       code: "BAD_REQUEST",
-      message: error.message,
+      message: detailFor(error),
     });
   }
 };
@@ -162,7 +163,7 @@ exports.deleteClaimType = async (req, res) => {
     console.error("Delete claim type error:", error);
     res.status(500).json({
       code: "SERVER_ERROR",
-      message: error.message,
+      message: detailFor(error),
     });
   }
 };

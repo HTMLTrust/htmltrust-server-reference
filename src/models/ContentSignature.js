@@ -6,8 +6,8 @@ const ContentSignatureSchema = new mongoose.Schema({
     required: [true, 'Content hash is required'],
     index: true
   },
-  // Canonical hash of the claims map (sorted, newline-joined "name=value"
-  // serialization, then hashed). Part of the signature binding per spec §2.1.
+  // Canonical hash of the claims map (sorted "name:content\n" records, then
+  // hashed). Part of the signature binding per spec §2.1.
   claimsHash: {
     type: String,
     default: ''

@@ -1,81 +1,88 @@
-# 06 — Endorsement listing & statistics
+# 06 — Structured endorsement listing
 #
-# Continues the same implementation-level vote API as 05. After submitting
-# an endorsement, we list votes for the target and pull aggregate stats.
-name: List endorsements and aggregate stats for an author
+# Submits a signed endorsement plus a revocation of it, then retrieves them
+# through both the legacy query endpoint and the normative content-scoped
+# endpoint. Draft §10.3 requires a directory holding both an endorsement and
+# its revocation to serve BOTH, so the second submission must not overwrite
+# the first.
+name: List structured endorsements for content
 description: |
-  GET /votes/{targetType}/{targetId} returns paginated votes plus trust/distrust
-  counts. GET /votes/stats/{targetType}/{targetId} returns aggregate stats.
+  GET /endorsements?content-hash=... and GET /content/{hash}/endorsements
+  return structured endorsement documents indexed by their draft endorsement
+  content hash.
 steps:
-  - name: Create author
+  - name: Register the endorser's public key
     request:
       method: POST
       path: /authors
       headers:
         X-API-KEY: $generalApiKey
       body:
-        name: "Tallied 06-$run_nonce"
-        keyType: "HUMAN"
+        name: "Endorser 06-$run_nonce"
+        keyType: "ORGANIZATION"
+        keyAlgorithm: "ed25519"
+        publicKey: $signerPublicKeyPem
     expect:
       status: 201
     capture:
       authorId: $.author.id
 
-  - name: Cast a TRUST vote
+  - name: Learn the directory key id for that public key
+    request:
+      method: GET
+      path: /authors/$authorId/public-key
+    expect:
+      status: 200
+    capture:
+      keyId: $.id
+
+  - name: Submit a signed endorsement
     request:
       method: POST
-      path: /votes
+      path: /endorsements
       headers:
         X-API-KEY: $generalApiKey
+      sign: endorsement
       body:
-        userId: "voter-a-06-$run_nonce"
-        targetType: "AUTHOR"
-        targetId: $authorId
-        voteType: "TRUST"
+        endorser: "$baseUrl/keys/$keyId"
+        endorsement: "sha256:yYWXTbC+4FCFhYkfp3ltiR41jVmudplLEeozQqman2I"
+        algorithm: "ed25519"
+        timestamp: "2026-05-10T09:00:00Z"
     expect:
       status: 201
 
-  - name: Cast a DISTRUST vote from a different user
+  - name: Submit a revocation of it from the same endorser
     request:
       method: POST
-      path: /votes
+      path: /endorsements
       headers:
         X-API-KEY: $generalApiKey
+      sign: endorsement
       body:
-        userId: "voter-b-06-$run_nonce"
-        targetType: "AUTHOR"
-        targetId: $authorId
-        voteType: "DISTRUST"
+        endorser: "$baseUrl/keys/$keyId"
+        endorsement: "sha256:yYWXTbC+4FCFhYkfp3ltiR41jVmudplLEeozQqman2I"
+        algorithm: "ed25519"
+        timestamp: "2026-05-11T09:00:00Z"
+        claim: "Withdrawn: the source page changed."
+        revokedBy: "sha256:yYWXTbC+4FCFhYkfp3ltiR41jVmudplLEeozQqman2I"
     expect:
       status: 201
 
-  - name: List votes for the author
+  - name: List through compatibility query endpoint
     request:
       method: GET
-      path: /votes/AUTHOR/$authorId
+      path: "/endorsements?content-hash=sha256%3AyYWXTbC%2B4FCFhYkfp3ltiR41jVmudplLEeozQqman2I"
     expect:
       status: 200
-      body:
-        votes: $any
-        counts:
-          trust: $integer
-          distrust: $integer
-          total: $integer
-        pagination:
-          page: $integer
-          limit: $integer
-          total: $integer
-          pages: $integer
 
-  - name: Aggregate vote stats for the author
+  - name: List through draft content-scoped endpoint; both documents are served
     request:
       method: GET
-      path: /votes/stats/AUTHOR/$authorId
+      path: "/content/sha256%3AyYWXTbC%2B4FCFhYkfp3ltiR41jVmudplLEeozQqman2I/endorsements"
     expect:
       status: 200
       body:
-        targetType: "AUTHOR"
-        trustCount: $integer
-        distrustCount: $integer
-        totalVotes: $integer
-        trustScore: $number
+        - endorser: "$baseUrl/keys/$keyId"
+          revokedBy: "sha256:yYWXTbC+4FCFhYkfp3ltiR41jVmudplLEeozQqman2I"
+        - endorser: "$baseUrl/keys/$keyId"
+          timestamp: "2026-05-10T09:00:00Z"

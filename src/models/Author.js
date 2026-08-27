@@ -22,9 +22,14 @@ const AuthorSchema = new mongoose.Schema({
     enum: ['HUMAN', 'AI', 'HUMAN_AI_MIX', 'ORGANIZATION'],
     required: [true, 'Please specify the key type']
   },
-  apiKey: {
+  // HMAC-SHA-256 of the author's API key under the server pepper. The key
+  // itself is shown once at creation and never stored; see
+  // src/utils/apiKeys.js for the rationale and the migration from the old
+  // plaintext `apiKey` field.
+  apiKeyHash: {
     type: String,
-    select: false // Don't return API key in queries
+    index: true,
+    select: false
   },
   createdAt: {
     type: Date,

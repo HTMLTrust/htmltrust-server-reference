@@ -50,10 +50,14 @@ if docker ps -a --format '{{.Names}}' | grep -qx "$MONGO_CONTAINER"; then
   echo "removing stale mongo container $MONGO_CONTAINER"
   docker rm -f "$MONGO_CONTAINER" >/dev/null
 fi
-echo "starting mongo on localhost:$MONGO_PORT (container: $MONGO_CONTAINER)"
+echo "starting mongo on 127.0.0.1:$MONGO_PORT (container: $MONGO_CONTAINER)"
+# Bound to the loopback interface. A bare "$MONGO_PORT:27017" publishes on
+# 0.0.0.0, which puts an unauthenticated Mongo on every interface of whatever
+# machine runs the conformance suite -- including laptops on untrusted
+# networks. Only this host needs to reach it.
 docker run -d --rm \
   --name "$MONGO_CONTAINER" \
-  -p "$MONGO_PORT:27017" \
+  -p "127.0.0.1:$MONGO_PORT:27017" \
   mongo:7 >/dev/null
 
 # Wait for mongo to accept connections.

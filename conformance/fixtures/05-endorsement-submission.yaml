@@ -1,65 +1,136 @@
-# 05 — Endorsement submission
+# 05 — Structured endorsement submission
 #
-# Note: the OpenAPI spec at openapi.yaml does not currently define the
-# /votes endpoints, but the reference implementation exposes them as the
-# "endorsement" / trust-distrust mechanism the spec text references.
-# This fixture exercises the implementation-level vote submission flow:
-# create an author, then submit a TRUST vote against that author.
+# Draft §9.7: the directory MUST verify the endorser's signature before
+# indexing an endorsement, and MUST reject an invalid one with 400. The happy
+# path therefore registers a public key whose private half the runner holds
+# and signs the document for real; the negative cases prove that a forged
+# signature and an unresolvable endorser are both refused.
 #
-# A future revision of the OpenAPI spec is expected to formalize these
-# endpoints; until then the suite asserts only the documented behaviour
-# of the implementation (status code + presence of identifying fields).
-name: Submit trust endorsement (vote) on an author
+# Draft §9.5/§10.1: the stored document is served back verbatim, so the
+# response body carries no server-assigned `_id`. The identifier comes from
+# the Location header.
+name: Submit structured endorsement document
 description: |
-  POST /votes accepts a TRUST or DISTRUST vote against an AUTHOR or CONTENT
-  target. This scenario submits a TRUST vote and verifies it is recorded.
+  POST /endorsements verifies the endorser signature over JCS(document minus
+  signature) and stores the document unmodified.
 steps:
-  - name: Create author to endorse
+  - name: Register the endorser's public key
     request:
       method: POST
       path: /authors
       headers:
         X-API-KEY: $generalApiKey
       body:
-        name: "Endorsee 05-$run_nonce"
-        keyType: "HUMAN"
+        name: "Endorser 05-$run_nonce"
+        keyType: "ORGANIZATION"
+        keyAlgorithm: "ed25519"
+        publicKey: $signerPublicKeyPem
     expect:
       status: 201
     capture:
       authorId: $.author.id
 
-  - name: Submit TRUST endorsement
+  - name: Learn the directory key id for that public key
     request:
-      method: POST
-      path: /votes
-      headers:
-        X-API-KEY: $generalApiKey
-      body:
-        userId: "voter-05-$run_nonce"
-        targetType: "AUTHOR"
-        targetId: $authorId
-        voteType: "TRUST"
-        reason: "Conformance scenario 05"
+      method: GET
+      path: /authors/$authorId/public-key
     expect:
-      status: 201
-      body:
-        targetType: "AUTHOR"
-        voteType: "TRUST"
+      status: 200
+      schema: PublicKey
+    capture:
+      keyId: $.id
 
-  - name: Submit DISTRUST endorsement (updates existing vote, same user/target)
+  - name: Submit a correctly signed endorsement
     request:
       method: POST
-      path: /votes
+      path: /endorsements
+      headers:
+        X-API-KEY: $generalApiKey
+      sign: endorsement
+      body:
+        endorser: "$baseUrl/keys/$keyId"
+        endorsement: "sha256:jPC/zIv0U/yOO0s9kY2U86pa9xudR17/niqrNOk0Puk"
+        algorithm: "ed25519"
+        timestamp: "2026-05-10T09:00:00Z"
+        claim: "Verified original publication."
+    expect:
+      status: 201
+      schema: Endorsement
+      body:
+        endorser: "$baseUrl/keys/$keyId"
+        endorsement: "sha256:jPC/zIv0U/yOO0s9kY2U86pa9xudR17/niqrNOk0Puk"
+        algorithm: "ed25519"
+        claim: "Verified original publication."
+    capture:
+      endorsementId:
+        header: location
+        pattern: "([0-9a-f]{24})$"
+
+  - name: Resubmitting the identical document is idempotent
+    request:
+      method: POST
+      path: /endorsements
+      headers:
+        X-API-KEY: $generalApiKey
+      sign: endorsement
+      body:
+        endorser: "$baseUrl/keys/$keyId"
+        endorsement: "sha256:jPC/zIv0U/yOO0s9kY2U86pa9xudR17/niqrNOk0Puk"
+        algorithm: "ed25519"
+        timestamp: "2026-05-10T09:00:00Z"
+        claim: "Verified original publication."
+    expect:
+      status: 200
+
+  - name: A forged signature is rejected with a problem document
+    request:
+      method: POST
+      path: /endorsements
       headers:
         X-API-KEY: $generalApiKey
       body:
-        userId: "voter-05-$run_nonce"
-        targetType: "AUTHOR"
-        targetId: $authorId
-        voteType: "DISTRUST"
-        reason: "Changed my mind"
+        endorser: "$baseUrl/keys/$keyId"
+        endorsement: "sha256:jPC/zIv0U/yOO0s9kY2U86pa9xudR17/niqrNOk0Puk"
+        algorithm: "ed25519"
+        timestamp: "2026-05-10T09:00:00Z"
+        signature: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
     expect:
-      status: 201
+      status: 400
+      schema: Problem
       body:
-        targetType: "AUTHOR"
-        voteType: "DISTRUST"
+        status: 400
+
+  - name: An endorser this directory cannot resolve is rejected
+    request:
+      method: POST
+      path: /endorsements
+      headers:
+        X-API-KEY: $generalApiKey
+      sign: endorsement
+      body:
+        endorser: "did:web:reviewer.example"
+        endorsement: "sha256:jPC/zIv0U/yOO0s9kY2U86pa9xudR17/niqrNOk0Puk"
+        algorithm: "ed25519"
+        timestamp: "2026-05-10T09:00:00Z"
+    expect:
+      status: 400
+      schema: Problem
+
+  - name: Deleting an endorsement requires more than the submission key
+    request:
+      method: DELETE
+      path: /endorsements/$endorsementId
+      headers:
+        X-API-KEY: $generalApiKey
+    expect:
+      status: 401
+      schema: Problem
+
+  - name: The directory operator can take an endorsement down
+    request:
+      method: DELETE
+      path: /endorsements/$endorsementId
+      headers:
+        X-ADMIN-API-KEY: $adminApiKey
+    expect:
+      status: 204

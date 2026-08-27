@@ -7,6 +7,10 @@
 #   * 401 — PUT /authors/{id} without X-AUTHOR-API-KEY
 #   * 403 — PUT /authors/{otherId} with the wrong author's API key
 #   * 404 — GET /authors/{bogus-id}
+#
+# Draft §9.9 requires errors in the RFC 9457 problem-details format, so the
+# authentication and authorization layers return `Problem` rather than the
+# legacy `Error` envelope, and 401s carry a WWW-Authenticate challenge.
 name: Documented error envelopes are returned with correct status codes
 description: |
   Asserts the Error schema is returned for unauthorized, forbidden, and
@@ -50,7 +54,7 @@ steps:
         keyType: "HUMAN"
     expect:
       status: 401
-      schema: Error
+      schema: Problem
 
   - name: 401 — PUT /authors/{id} with no author API key
     request:
@@ -60,7 +64,7 @@ steps:
         description: "Should fail"
     expect:
       status: 401
-      schema: Error
+      schema: Problem
 
   - name: 403 — PUT /authors/{authorB} with authorA's key
     request:
@@ -72,7 +76,7 @@ steps:
         description: "Cross-author update should be forbidden"
     expect:
       status: 403
-      schema: Error
+      schema: Problem
 
   - name: 404 — GET /authors/{nonexistent}
     request:

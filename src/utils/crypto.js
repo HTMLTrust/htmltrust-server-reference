@@ -1,4 +1,9 @@
 const crypto = require("crypto");
+const {
+  decodeCanonicalBase64,
+  normalizeAlgorithm,
+  toCanonicalBase64,
+} = require("./htmltrustProtocol");
 
 /**
  * Generate a key pair
@@ -7,9 +12,11 @@ const crypto = require("crypto");
  */
 const generateKeyPair = (algorithm = "RSA") => {
   let options;
+  const normalized = normalizeAlgorithm(algorithm);
 
-  switch (algorithm) {
-    case "RSA":
+  switch (normalized) {
+    case "rsa-pkcs1-sha256":
+    case "rsa-pss-sha256":
       options = {
         modulusLength: 2048,
         publicKeyEncoding: {
@@ -22,9 +29,9 @@ const generateKeyPair = (algorithm = "RSA") => {
         },
       };
       break;
-    case "ECDSA":
+    case "ecdsa-p256":
       options = {
-        namedCurve: "secp256k1",
+        namedCurve: "prime256v1",
         publicKeyEncoding: {
           type: "spki",
           format: "pem",
@@ -35,7 +42,20 @@ const generateKeyPair = (algorithm = "RSA") => {
         },
       };
       break;
-    case "ED25519":
+    case "ecdsa-p384":
+      options = {
+        namedCurve: "secp384r1",
+        publicKeyEncoding: {
+          type: "spki",
+          format: "pem",
+        },
+        privateKeyEncoding: {
+          type: "pkcs8",
+          format: "pem",
+        },
+      };
+      break;
+    case "ed25519":
       options = {
         publicKeyEncoding: {
           type: "spki",
@@ -52,11 +72,11 @@ const generateKeyPair = (algorithm = "RSA") => {
   }
 
   return crypto.generateKeyPairSync(
-    algorithm === "ED25519"
+    normalized === "ed25519"
       ? "ed25519"
-      : algorithm === "ECDSA"
+      : normalized.startsWith("ecdsa")
         ? "ec"
-        : algorithm.toLowerCase(),
+        : "rsa",
     options,
   );
 };
@@ -70,20 +90,31 @@ const generateKeyPair = (algorithm = "RSA") => {
  */
 const signContent = (data, privateKey, algorithm = "RSA") => {
   let sign;
+  const normalized = normalizeAlgorithm(algorithm);
 
-  switch (algorithm) {
-    case "RSA":
+  switch (normalized) {
+    case "rsa-pkcs1-sha256":
       sign = crypto.createSign("SHA256");
       sign.update(data);
-      return sign.sign(privateKey, "base64");
-    case "ECDSA":
+      return toCanonicalBase64(sign.sign(privateKey));
+    case "rsa-pss-sha256":
       sign = crypto.createSign("SHA256");
       sign.update(data);
-      return sign.sign(privateKey, "base64");
-    case "ED25519":
-      return crypto
-        .sign(null, Buffer.from(data), privateKey)
-        .toString("base64");
+      return toCanonicalBase64(sign.sign({
+        key: privateKey,
+        padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+        saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST,
+      }));
+    case "ecdsa-p256":
+      sign = crypto.createSign("SHA256");
+      sign.update(data);
+      return toCanonicalBase64(sign.sign({ key: privateKey, dsaEncoding: "ieee-p1363" }));
+    case "ecdsa-p384":
+      sign = crypto.createSign("SHA384");
+      sign.update(data);
+      return toCanonicalBase64(sign.sign({ key: privateKey, dsaEncoding: "ieee-p1363" }));
+    case "ed25519":
+      return toCanonicalBase64(crypto.sign(null, Buffer.from(data), privateKey));
     default:
       throw new Error(`Unsupported algorithm: ${algorithm}`);
   }
@@ -100,22 +131,38 @@ const signContent = (data, privateKey, algorithm = "RSA") => {
 const verifySignature = (data, signature, publicKey, algorithm = "RSA") => {
   try {
     let verify;
+    const normalized = normalizeAlgorithm(algorithm);
+    const decodedSignature = decodeCanonicalBase64(signature, "signature");
 
-    switch (algorithm) {
-      case "RSA":
+    switch (normalized) {
+      case "rsa-pkcs1-sha256":
         verify = crypto.createVerify("SHA256");
         verify.update(data);
-        return verify.verify(publicKey, signature, "base64");
-      case "ECDSA":
+        return verify.verify(publicKey, decodedSignature);
+      case "rsa-pss-sha256":
         verify = crypto.createVerify("SHA256");
         verify.update(data);
-        return verify.verify(publicKey, signature, "base64");
-      case "ED25519":
+        return verify.verify({
+          key: publicKey,
+          padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+          saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST,
+        }, decodedSignature);
+      case "ecdsa-p256":
+        if (decodedSignature.byteLength !== 64) return false;
+        verify = crypto.createVerify("SHA256");
+        verify.update(data);
+        return verify.verify({ key: publicKey, dsaEncoding: "ieee-p1363" }, decodedSignature);
+      case "ecdsa-p384":
+        if (decodedSignature.byteLength !== 96) return false;
+        verify = crypto.createVerify("SHA384");
+        verify.update(data);
+        return verify.verify({ key: publicKey, dsaEncoding: "ieee-p1363" }, decodedSignature);
+      case "ed25519":
         return crypto.verify(
           null,
           Buffer.from(data),
           publicKey,
-          Buffer.from(signature, "base64"),
+          decodedSignature,
         );
       default:
         throw new Error(`Unsupported algorithm: ${algorithm}`);
