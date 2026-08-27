@@ -36,7 +36,7 @@ This server implements the **Trust Directory** component of the HTMLTrust system
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 22+
 - MongoDB (local or remote)
 
 ### Setup
@@ -51,6 +51,11 @@ npm run dev             # Starts with nodemon (auto-reload)
 
 The server starts at `http://localhost:3000`. A demo web UI is available at the root URL.
 
+To use the checked-in lockfile, replace `npm install` with `npm ci`. For a
+containerized development environment, open the repository in VS Code Dev
+Containers. The configuration starts Node 22 and MongoDB 7 with the same
+application URL and development credentials.
+
 ### Tests
 
 ```sh
@@ -59,6 +64,19 @@ npm run conformance   # full API conformance suite against a disposable MongoDB
 ```
 
 `npm test` needs no database. `npm run conformance` boots `mongodb-memory-server` and the reference server itself; set `SERVER_PORT` / `MONGO_PORT` if 3000 or 37017 are taken.
+
+For the Docker-based conformance path, use the repository script. It starts a
+MongoDB 7 container bound to loopback, starts this server with Node on the
+host, runs all fixtures, and removes the disposable container when complete:
+
+```sh
+npm ci
+npm run conformance:docker
+```
+
+Use `SERVER_PORT=3100 MONGO_PORT=37018 npm run conformance:docker` when the
+default ports are occupied. Add `--keep-running` to leave the server and
+MongoDB container running for manual requests.
 
 ### Environment Variables
 
@@ -70,6 +88,14 @@ See `.env.example` for all options. At minimum you need:
 | `AUTHOR_API_KEY_PEPPER` | Pepper for author API key hashing. Required when `NODE_ENV=production`; the server refuses to start without it |
 | `GENERAL_API_KEY` | Supplementary demo key for submission endpoints |
 | `ADMIN_API_KEY` | Admin key for directory-operator operations (defining claim types, endorsement takedown) |
+
+The CMS integration normally sets `HTMLTRUST_API_URL` to the server origin,
+`HTMLTRUST_AUTHOR_ID` to the registered author, and
+`HTMLTRUST_AUTHOR_API_KEY` to the one-time key returned by `POST /api/authors`.
+The server's compatibility signing endpoint is
+`POST /api/content/sign`; it returns `contentHash`, `claimsHash`, `signature`,
+`keyid`, and `algorithm`. The CMS passes its publication origin in `domain` and
+must preserve the returned algorithm and keyid in the signed section.
 
 ## API Overview
 
