@@ -2,6 +2,109 @@ const Key = require('../models/Key');
 const Author = require('../models/Author');
 const ContentSignature = require('../models/ContentSignature');
 const ContentOccurrence = require('../models/ContentOccurrence');
+const {
+  detailFor,
+  keyDocumentFor,
+  normalizeSerializedOrigin,
+  problem,
+  safeSearchRegex,
+} = require('../utils/htmltrustProtocol');
+
+/**
+ * Clamp caller-supplied pagination. An unbounded `limit` turns a public read
+ * endpoint into a bulk-export and a memory-pressure lever.
+ */
+const MAX_PAGE_SIZE = 100;
+const boundedLimit = (value, fallback = 20) => {
+  const parsed = parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return fallback;
+  return Math.min(parsed, MAX_PAGE_SIZE);
+};
+const boundedPage = (value) => {
+  const parsed = parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return 1;
+  return parsed;
+};
+
+const baseDirectoryUrl = (req) => `${req.protocol}://${req.get('host')}/api/`;
+
+const keyIdFromSignerId = (id) => {
+  if (!id || typeof id !== 'string') return null;
+  if (/^[0-9a-fA-F]{24}$/.test(id)) return id;
+  try {
+    const url = new URL(id);
+    const segments = url.pathname.split('/').filter(Boolean);
+    const keyIndex = segments.lastIndexOf('keys');
+    if (keyIndex !== -1 && segments[keyIndex + 1]) {
+      return decodeURIComponent(segments[keyIndex + 1]);
+    }
+  } catch {}
+  return null;
+};
+
+exports.discovery = async (req, res) => {
+  res
+    .type('application/htmltrust-directory+json')
+    .status(200)
+    .json({
+      directory: baseDirectoryUrl(req),
+      version: '1',
+      capabilities: {
+        content: true,
+        endorsements: true,
+        keys: true,
+        reputation: true
+      },
+      supportedAlgorithms: {
+        signature: ['ed25519', 'rsa-pkcs1-sha256', 'ecdsa-p256'],
+        hash: ['sha256']
+      }
+    });
+};
+
+exports.getKeyDocument = async (req, res) => {
+  try {
+    const key = await Key.findById(req.params.id);
+    if (!key) {
+      return problem(res, 404, 'Key not found', 'No key document exists for the requested id');
+    }
+    res
+      .type('application/htmltrust-key+json')
+      .status(200)
+      .json(keyDocumentFor(key));
+  } catch (error) {
+    return problem(res, 400, 'Invalid key id', detailFor(error));
+  }
+};
+
+exports.getSignerReputation = async (req, res) => {
+  try {
+    const signerId = decodeURIComponent(req.params.id);
+    const keyId = keyIdFromSignerId(signerId);
+    let key = null;
+    if (keyId) {
+      key = await Key.findById(keyId);
+    }
+    if (!key && /^[0-9a-fA-F]{24}$/.test(signerId)) {
+      key = await Key.findOne({ authorId: signerId });
+    }
+    if (!key) {
+      return problem(res, 404, 'Signer not found', 'No local signer reputation exists for the requested id', {
+        keyid: signerId,
+      });
+    }
+
+    res.status(200).json({
+      keyid: signerId,
+      score: key.trustScore,
+      asOf: (key.updatedAt || key.createdAt || new Date()).toISOString(),
+      components: ['verified-signatures', 'reports'],
+      methodology: `${baseDirectoryUrl(req)}methodology/reputation-v1`
+    });
+  } catch (error) {
+    return problem(res, 400, 'Invalid signer id', detailFor(error));
+  }
+};
 
 /**
  * @desc    Search public keys
@@ -15,17 +118,28 @@ exports.searchPublicKeys = async (req, res) => {
     // Build query
     const query = {};
     
-    // Join with Author model to filter by author name and key type
+    // Join with Author model to filter by author name and key type.
+    //
+    // `authorName` is unauthenticated caller input on a public route. Passing
+    // it straight into $regex let the caller supply pattern syntax — both a
+    // NoSQL injection (the filter no longer means what the code says) and a
+    // denial of service (a catastrophically backtracking pattern is evaluated
+    // per document inside the database). safeSearchRegex escapes, caps, and
+    // anchors it into a literal prefix match.
     const authorQuery = {};
-    if (authorName) authorQuery.name = { $regex: authorName, $options: 'i' };
-    if (keyType) authorQuery.keyType = keyType;
+    if (authorName) authorQuery['author.name'] = safeSearchRegex(authorName, 'authorName');
+    if (keyType) authorQuery['author.keyType'] = String(keyType);
     
     // Filter by trust score
     if (minTrustScore) query.trustScore = { $gte: parseFloat(minTrustScore) };
-    
-    // Pagination
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    
+    const normalizedDomain = domain ? normalizeSerializedOrigin(domain) : null;
+
+    // Pagination. `limit` is caller-controlled, so it is clamped: an
+    // unbounded page size lets one request pull the whole collection.
+    const pageNumber = boundedPage(page);
+    const pageSize = boundedLimit(limit);
+    const skip = (pageNumber - 1) * pageSize;
+
     // Execute query with aggregation to join with Author model
     const keys = await Key.aggregate([
       {
@@ -42,15 +156,14 @@ exports.searchPublicKeys = async (req, res) => {
       {
         $match: {
           ...query,
-          'author': { $exists: true },
-          ...Object.keys(authorQuery).length > 0 ? { 'author': authorQuery } : {}
+          ...authorQuery
         }
       },
       {
         $skip: skip
       },
       {
-        $limit: parseInt(limit)
+        $limit: pageSize
       },
       {
         $project: {
@@ -72,19 +185,22 @@ exports.searchPublicKeys = async (req, res) => {
     const total = await Key.countDocuments(query);
     
     res.status(200).json({
-      keys,
+      keys: normalizedDomain ? keys.filter((key) => key.author && key.author.url && key.author.url.startsWith(normalizedDomain)) : keys,
       pagination: {
         total,
-        pages: Math.ceil(total / parseInt(limit)),
-        page: parseInt(page),
-        limit: parseInt(limit)
+        pages: Math.ceil(total / pageSize),
+        page: pageNumber,
+        limit: pageSize
       }
     });
   } catch (error) {
+    if (error.expose) {
+      return problem(res, 400, 'Invalid query', error.message);
+    }
     console.error('Search public keys error:', error);
     res.status(500).json({
       code: 'SERVER_ERROR',
-      message: error.message
+      message: detailFor(error)
     });
   }
 };
@@ -116,7 +232,7 @@ exports.getKeyReputation = async (req, res) => {
     console.error('Get key reputation error:', error);
     res.status(500).json({
       code: 'SERVER_ERROR',
-      message: error.message
+      message: detailFor(error)
     });
   }
 };
@@ -159,7 +275,7 @@ exports.reportKey = async (req, res) => {
     console.error('Report key error:', error);
     res.status(400).json({
       code: 'BAD_REQUEST',
-      message: error.message
+      message: detailFor(error)
     });
   }
 };
@@ -177,14 +293,16 @@ exports.searchSignedContent = async (req, res) => {
     const query = {};
     if (contentHash) query.contentHash = contentHash;
     if (authorId) query.authorId = authorId;
-    if (domain) query.domain = domain;
+    if (domain) query.domain = normalizeSerializedOrigin(domain);
     if (claim) {
       const [claimName, claimValue] = claim.split(':');
       query[`claims.${claimName}`] = claimValue;
     }
     
-    // Pagination
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    // Pagination (clamped; see boundedLimit)
+    const pageNumber = boundedPage(page);
+    const pageSize = boundedLimit(limit);
+    const skip = (pageNumber - 1) * pageSize;
     
     // Execute query with aggregation to join with Author model
     const signatures = await ContentSignature.aggregate([
@@ -206,7 +324,7 @@ exports.searchSignedContent = async (req, res) => {
         $skip: skip
       },
       {
-        $limit: parseInt(limit)
+        $limit: pageSize
       },
       {
         $project: {
@@ -230,16 +348,16 @@ exports.searchSignedContent = async (req, res) => {
       signatures,
       pagination: {
         total,
-        pages: Math.ceil(total / parseInt(limit)),
-        page: parseInt(page),
-        limit: parseInt(limit)
+        pages: Math.ceil(total / pageSize),
+        page: pageNumber,
+        limit: pageSize
       }
     });
   } catch (error) {
     console.error('Search signed content error:', error);
     res.status(500).json({
       code: 'SERVER_ERROR',
-      message: error.message
+      message: detailFor(error)
     });
   }
 };
@@ -268,15 +386,17 @@ exports.findContentOccurrences = async (req, res) => {
     // Get signature IDs
     const signatureIds = signatures.map(sig => sig._id);
     
-    // Pagination
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    // Pagination (clamped; see boundedLimit)
+    const pageNumber = boundedPage(page);
+    const pageSize = boundedLimit(limit);
+    const skip = (pageNumber - 1) * pageSize;
     
     // Find occurrences
     const occurrences = await ContentOccurrence.find({
       signatureId: { $in: signatureIds }
     })
       .skip(skip)
-      .limit(parseInt(limit))
+      .limit(pageSize)
       .sort({ firstSeen: -1 });
     
     // Get total count
@@ -288,16 +408,16 @@ exports.findContentOccurrences = async (req, res) => {
       occurrences,
       pagination: {
         total,
-        pages: Math.ceil(total / parseInt(limit)),
-        page: parseInt(page),
-        limit: parseInt(limit)
+        pages: Math.ceil(total / pageSize),
+        page: pageNumber,
+        limit: pageSize
       }
     });
   } catch (error) {
     console.error('Find content occurrences error:', error);
     res.status(500).json({
       code: 'SERVER_ERROR',
-      message: error.message
+      message: detailFor(error)
     });
   }
 };
@@ -333,7 +453,7 @@ exports.reportContentMisuse = async (req, res) => {
     console.error('Report content misuse error:', error);
     res.status(400).json({
       code: 'BAD_REQUEST',
-      message: error.message
+      message: detailFor(error)
     });
   }
 };

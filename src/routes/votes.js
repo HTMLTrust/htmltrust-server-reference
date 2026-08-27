@@ -7,14 +7,19 @@ const {
   getVoteStats,
 } = require("../controllers/voteController");
 const { protectWithGeneralApiKey } = require("../middleware/auth");
+const { requireActorSignature } = require("../middleware/httpSignature");
+
+// Votes move reputation, so the voter is the verified signer of the request
+// when one is present; see voterIdentity() in the controller.
+const authenticatedVoter = requireActorSignature({ fallback: protectWithGeneralApiKey });
 
 // Routes
-router.route("/").post(protectWithGeneralApiKey, createVote);
+router.route("/").post(authenticatedVoter, createVote);
 
 router.route("/stats/:targetType/:targetId").get(getVoteStats);
 
 router.route("/:targetType/:targetId").get(getVotes);
 
-router.route("/:voteId").delete(protectWithGeneralApiKey, deleteVote);
+router.route("/:voteId").delete(authenticatedVoter, deleteVote);
 
 module.exports = router;

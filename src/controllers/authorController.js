@@ -1,6 +1,9 @@
+const crypto = require("crypto");
 const Author = require("../models/Author");
 const Key = require("../models/Key");
 const { generateKeyPair, generateApiKey } = require("../utils/crypto");
+const { detailFor, invalid, problem, safeSearchRegex } = require("../utils/htmltrustProtocol");
+const { hashApiKey } = require("../utils/apiKeys");
 
 /**
  * @desc    Create a new author and key pair
@@ -9,12 +12,28 @@ const { generateKeyPair, generateApiKey } = require("../utils/crypto");
  */
 exports.createAuthor = async (req, res) => {
   try {
-    const { name, description, url, keyType, keyAlgorithm = "RSA" } = req.body;
+    const { name, description, url, keyType, keyAlgorithm = "ed25519" } = req.body;
 
-    // Generate key pair
-    const { publicKey, privateKey } = generateKeyPair(keyAlgorithm);
+    // An author MAY register a public key it already holds, in which case the
+    // directory never sees the private half. Otherwise the directory acts as
+    // the convenience registry described in draft §9.6 and generates the pair.
+    let publicKey = req.body.publicKey;
+    let privateKey;
+    if (publicKey) {
+      if (typeof publicKey !== "string" || !publicKey.includes("BEGIN PUBLIC KEY")) {
+        throw invalid("publicKey must be an SPKI PEM public key");
+      }
+      try {
+        crypto.createPublicKey(publicKey);
+      } catch {
+        throw invalid("publicKey is not a readable SPKI PEM public key");
+      }
+    } else {
+      ({ publicKey, privateKey } = generateKeyPair(keyAlgorithm));
+    }
 
-    // Generate author API key
+    // Generate author API key. Only the HMAC of the key is persisted; the key
+    // itself is returned once here and cannot be recovered afterwards.
     const apiKey = generateApiKey();
 
     // Create author
@@ -23,7 +42,7 @@ exports.createAuthor = async (req, res) => {
       description,
       url,
       keyType,
-      apiKey,
+      apiKeyHash: hashApiKey(apiKey),
     });
 
     // Create key
@@ -51,7 +70,7 @@ exports.createAuthor = async (req, res) => {
     console.error("Create author error:", error);
     res.status(400).json({
       code: "BAD_REQUEST",
-      message: error.message,
+      message: detailFor(error, "The author could not be created"),
     });
   }
 };
@@ -65,18 +84,22 @@ exports.getAuthors = async (req, res) => {
   try {
     const { name, keyType, page = 1, limit = 20 } = req.query;
 
-    // Build query
+    // Build query. `name` is caller input: escaped, length-capped, and
+    // anchored so it cannot become regular-expression syntax evaluated inside
+    // the database (NoSQL injection / ReDoS).
     const query = {};
-    if (name) query.name = { $regex: name, $options: "i" };
-    if (keyType) query.keyType = keyType;
+    if (name) query.name = safeSearchRegex(name, "name");
+    if (keyType) query.keyType = String(keyType);
 
-    // Pagination
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    // Pagination, clamped so one request cannot page the whole collection.
+    const pageNumber = Math.max(1, parseInt(page, 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+    const skip = (pageNumber - 1) * pageSize;
 
     // Execute query
     const authors = await Author.find(query)
       .skip(skip)
-      .limit(parseInt(limit))
+      .limit(pageSize)
       .sort({ createdAt: -1 });
 
     // Get total count
@@ -86,16 +109,19 @@ exports.getAuthors = async (req, res) => {
       authors,
       pagination: {
         total,
-        pages: Math.ceil(total / parseInt(limit)),
-        page: parseInt(page),
-        limit: parseInt(limit),
+        pages: Math.ceil(total / pageSize),
+        page: pageNumber,
+        limit: pageSize,
       },
     });
   } catch (error) {
+    if (error.expose) {
+      return problem(res, 400, "Invalid query", error.message);
+    }
     console.error("Get authors error:", error);
     res.status(500).json({
       code: "SERVER_ERROR",
-      message: error.message,
+      message: detailFor(error),
     });
   }
 };
@@ -121,7 +147,7 @@ exports.getAuthor = async (req, res) => {
     console.error("Get author error:", error);
     res.status(500).json({
       code: "SERVER_ERROR",
-      message: error.message,
+      message: detailFor(error),
     });
   }
 };
@@ -158,7 +184,7 @@ exports.updateAuthor = async (req, res) => {
     console.error("Update author error:", error);
     res.status(400).json({
       code: "BAD_REQUEST",
-      message: error.message,
+      message: detailFor(error),
     });
   }
 };
@@ -191,7 +217,7 @@ exports.deleteAuthor = async (req, res) => {
     console.error("Delete author error:", error);
     res.status(500).json({
       code: "SERVER_ERROR",
-      message: error.message,
+      message: detailFor(error),
     });
   }
 };
@@ -225,7 +251,7 @@ exports.getAuthorPublicKey = async (req, res) => {
     console.error("Get public key error:", error);
     res.status(500).json({
       code: "SERVER_ERROR",
-      message: error.message,
+      message: detailFor(error),
     });
   }
 };

@@ -2,6 +2,24 @@ const Vote = require("../models/Vote");
 const Author = require("../models/Author");
 const Key = require("../models/Key");
 const ContentSignature = require("../models/ContentSignature");
+const { detailFor, problem } = require("../utils/htmltrustProtocol");
+
+/**
+ * The identity a vote belongs to.
+ *
+ * Votes move a key's trust score, so who cast one has to be established by
+ * the request rather than asserted in its body. A caller that authenticated
+ * with an RFC 9421 signature votes as the key it signed with. A caller using
+ * the shared demo API key has no distinguishable identity, so every such
+ * caller collapses onto a single voter id — which, combined with the unique
+ * { userId, targetType, targetId } index, means the shared key is worth
+ * exactly one vote per target instead of unlimited ballot stuffing.
+ */
+const voterIdentity = (req) => {
+  if (req.htmltrustActor) return `key:${req.htmltrustActor.keyid}`;
+  if (req.author) return `author:${req.author._id}`;
+  return "shared-api-key";
+};
 
 /**
  * @desc    Vote on an author or content
@@ -10,7 +28,8 @@ const ContentSignature = require("../models/ContentSignature");
  */
 exports.createVote = async (req, res) => {
   try {
-    const { userId, targetType, targetId, voteType, reason } = req.body;
+    const { targetType, targetId, voteType, reason } = req.body;
+    const userId = voterIdentity(req);
 
     // Validate target exists
     let target;
@@ -72,7 +91,7 @@ exports.createVote = async (req, res) => {
     console.error("Create vote error:", error);
     res.status(400).json({
       code: "BAD_REQUEST",
-      message: error.message,
+      message: detailFor(error),
     });
   }
 };
@@ -151,7 +170,7 @@ exports.getVotes = async (req, res) => {
     console.error("Get votes error:", error);
     res.status(500).json({
       code: "SERVER_ERROR",
-      message: error.message,
+      message: detailFor(error),
     });
   }
 };
@@ -172,11 +191,12 @@ exports.deleteVote = async (req, res) => {
       });
     }
 
-    // Check if the user ID in the request matches the user ID of the vote
-    if (req.body.userId !== vote.userId) {
-      return res.status(403).json({
-        code: "FORBIDDEN",
-        message: "Not authorized to delete this vote",
+    // Ownership is derived from the authenticated request, not from a
+    // caller-supplied body field: trusting `req.body.userId` let any caller
+    // delete any vote simply by naming its owner.
+    if (voterIdentity(req) !== vote.userId) {
+      return problem(res, 403, "Forbidden", "Not authorized to delete this vote", {
+        type: "https://htmltrust.org/errors/forbidden",
       });
     }
 
@@ -204,7 +224,7 @@ exports.deleteVote = async (req, res) => {
     console.error("Delete vote error:", error);
     res.status(500).json({
       code: "SERVER_ERROR",
-      message: error.message,
+      message: detailFor(error),
     });
   }
 };
@@ -262,7 +282,7 @@ exports.getVoteStats = async (req, res) => {
     console.error("Get vote stats error:", error);
     res.status(500).json({
       code: "SERVER_ERROR",
-      message: error.message,
+      message: detailFor(error),
     });
   }
 };
