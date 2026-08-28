@@ -7,8 +7,8 @@ const { resolveUsableKey } = require("../utils/keyResolution");
  *
  *   "POST endpoints MUST be authenticated using HTTP Message Signatures
  *    [RFC9421] with a key that the directory can resolve via Section 8. The
- *    signature input MUST cover the `(request-target)`, `host`, `date`, and
- *    `content-digest` components at a minimum."
+ *    canonical v1 signature input covers exactly `@method`, `@target-uri`,
+ *    `host`, `date`, and `content-digest`, in that order."
  *
  * This is a deliberately small verifier, not a general RFC 9421 library.
  * Strict mode implements the HTMLTrust v1 request profile. Compatibility

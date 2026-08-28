@@ -240,7 +240,9 @@ exports.getAuthorPublicKey = async (req, res) => {
     }
 
     res.status(200).json({
-      id: key._id,
+      // Expose the opaque protocol identifier. Keep the Mongo ObjectId in the
+      // compatibility storage model, but never make it the new key URL id.
+      id: key.publicId || key._id,
       authorId: key.authorId,
       key: key.publicKey,
       algorithm: key.algorithm,

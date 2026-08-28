@@ -73,7 +73,7 @@ This is the lowest-dependency test path: it requires Docker and a shell. Set `HT
    npm ci --omit=dev
    ```
 
-3. Set `NODE_ENV=production`, `AUTHOR_API_KEY_PEPPER`, and `DIRECTORY_BASE_URL`. Use a random, long-lived pepper and keep it outside the repository. `DIRECTORY_BASE_URL` must be the public origin clients use to resolve directory key URLs.
+3. Set `NODE_ENV=production`, `AUTHOR_API_KEY_PEPPER`, and `DIRECTORY_BASE_URL`. Use a random, long-lived pepper and keep it outside the repository. `DIRECTORY_BASE_URL` must be the public HTTPS origin clients use to resolve directory key URLs. When the variable is unset, the server falls back to the request origin for local development, including `http://localhost`; that fallback is not a production deployment setting.
 4. Set `GENERAL_API_KEY` and `ADMIN_API_KEY` when compatibility or operator routes need them. Static general and author API-key authentication is disabled in production unless `HTMLTRUST_ALLOW_API_KEY_AUTH=1` is set.
 5. Start the service with `npm start` behind a TLS-terminating reverse proxy. Set `TRUST_PROXY` to the number of trusted proxy hops when the proxy forwards client addresses.
 
@@ -101,11 +101,9 @@ The server exposes two HTTP surfaces. The root routes are the canonical HTMLTrus
 | `POST /content` | Submit and re-verify a signed content record | RFC 9421 HTTP Message Signature |
 | `GET /content/:hash` | Retrieve a content record by percent-encoded hash | Public |
 | `GET /content/:hash/endorsements` | List endorsements for a content hash | Public |
-| `GET /endorsements?content-hash=...` | List endorsements for a content hash | Public |
 | `POST /endorsements` | Store a signed endorsement | RFC 9421 HTTP Message Signature |
-| `DELETE /endorsements/:id` | Delete an endorsement with the endorser key or directory admin key | Endorser signature or admin key |
 
-Canonical writes require a resolvable key in an RFC 9421 signature. The covered components include `@method`, `@target-uri`, `host`, `date`, and `content-digest` for requests with a body. The `keyid` identifies the key that signed the request.
+Canonical writes require a resolvable key in an RFC 9421 signature. The `sig1` input MUST cover exactly `@method`, `@target-uri`, `host`, `date`, and `content-digest`, in that order. The `keyid` identifies the key that signed the request.
 
 Canonical reads return an HTMLTrust media type by default and accept `application/json`. Responses include `Vary: Accept`; public reads include `Cache-Control` and `ETag`. A matching `If-None-Match` request receives `304 Not Modified`. Canonical JSON submissions accept `application/json` and `application/*+json`; another request media type receives `415`.
 
@@ -154,7 +152,7 @@ Author API keys are returned once by `POST /api/authors`. The server stores an H
 
 ### Key custody
 
-`POST /api/authors` accepts an optional SPKI PEM `publicKey`. Supplying one registers a key held by the caller and leaves its private key outside the directory. Omitting it asks the server to generate and hold a key pair for the convenience registry flow. Content signed by a caller-held key is submitted through `POST /content` or the compatibility `POST /api/content` route.
+`POST /api/authors` accepts an optional SPKI PEM `publicKey`. Supplying one registers a key held by the caller and leaves its private key outside the directory. Omitting it asks the server to generate and hold a key pair for the convenience registry flow. The public key document uses an opaque `id` in `/keys/{id}` URLs; existing pre-v1 rows remain readable through their legacy ObjectId URL until migrated. Content signed by a caller-held key is submitted through `POST /content` or the compatibility `POST /api/content` route.
 
 ## Project structure
 

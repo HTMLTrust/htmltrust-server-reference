@@ -65,9 +65,9 @@ components:
         via Section 8."
 
         The request carries `Signature-Input` and `Signature` header fields.
-        The covered components MUST include the request target (`@method`
-        together with `@target-uri`, or `@request-target`), `host`, `date`,
-        and, for any request with a body, `content-digest` (RFC 9530). The
+        For the canonical v1 POST endpoints, `sig1` MUST cover exactly these
+        components in this order: `@method`, `@target-uri`, `host`, `date`,
+        and `content-digest` (RFC 9530). The
         `keyid` signature parameter is resolved per draft §8 (DID, HTTPS key
         document, or a directory `/keys/{id}` reference) and the signature is
         verified against that key, so the authenticated identity is the key
@@ -77,7 +77,7 @@ components:
 
           Signature-Input: sig1=("@method" "@target-uri" "host" "date" \
             "content-digest");created=1770000000;keyid="https://directory.example/keys/k-abc123";alg="ed25519"
-          Signature: sig1=:MEUCIQD...:
+          Signature: sig1=:BASE64_ED25519_SIGNATURE:
 
         Failed verification returns 401 with a
         `WWW-Authenticate: Signature realm="htmltrust-directory"` challenge
@@ -219,8 +219,8 @@ components:
       properties:
         id:
           type: string
-          format: uuid
-          description: Unique identifier for the public key
+          description: Opaque public identifier for the key document
+          pattern: "^(k_[A-Za-z0-9_-]{20,64}|[0-9A-Fa-f]{24})$"
         authorId:
           type: string
           format: uuid
@@ -241,7 +241,7 @@ components:
           format: date-time
           description: Expiration timestamp (if applicable)
       example:
-        id: "123e4567-e89b-12d3-a456-426614174001"
+        id: "k_2Y7mB8xQ4nP6rT9vW3zA5cD7eF"
         authorId: "123e4567-e89b-12d3-a456-426614174000"
         key: "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA...\n-----END PUBLIC KEY-----"
         algorithm: "RSA"
@@ -357,6 +357,7 @@ components:
         signedAt:
           type: string
           format: date-time
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
         scope:
           type: string
           enum: [url, origin]
@@ -369,11 +370,13 @@ components:
         sourceURL:
           type: string
           format: uri
+          pattern: "^[hH][tT][tT][pP][sS]://"
         claims:
           type: array
           items:
             type: object
             required: [name, content]
+            additionalProperties: false
             properties:
               name: { type: string }
               content: { type: string }
@@ -479,6 +482,7 @@ components:
         signedAt:
           type: string
           description: Exact UTC timestamp in YYYY-MM-DDTHH:MM:SSZ form
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
         scope:
           type: string
           enum: [url, origin]
@@ -490,6 +494,7 @@ components:
           type: string
           format: uri
           description: Final HTTPS occurrence URL
+          pattern: "^[hH][tT][tT][pP][sS]://"
         keyid:
           type: string
           description: Exact directory key identifier bound into the JCS payload
@@ -571,7 +576,7 @@ components:
         signedAt: "2026-05-01T10:30:00Z"
         domain: "https://example.com"
         authorId: "123e4567-e89b-12d3-a456-426614174000"
-        keyid: "https://directory.example/keys/123e4567-e89b-12d3-a456-426614174001"
+        keyid: "https://directory.example/keys/k_2Y7mB8xQ4nP6rT9vW3zA5cD7eF"
         algorithm: "ed25519"
         signature: "MEUCIQD7y5SxmQJ9f0lE9B0BwqIJKKdL5fZMNQOiPnKWUJfmrgIgEbHtPwDxM9xGbCZzW9k2R9jFxwJZQQlPfhgj+0YP7vQ="
         claims:
@@ -589,8 +594,7 @@ components:
       properties:
         keyId:
           type: string
-          format: uuid
-          description: ID of the public key
+          description: Opaque public key id, or a legacy ObjectId accepted by the compatibility route
         trustScore:
           type: number
           format: float
@@ -608,7 +612,7 @@ components:
           format: date-time
           description: Last update timestamp
       example:
-        keyId: "123e4567-e89b-12d3-a456-426614174001"
+        keyId: "k_2Y7mB8xQ4nP6rT9vW3zA5cD7eF"
         trustScore: 0.95
         verifiedSignatures: 1250
         reports: 2
@@ -754,6 +758,7 @@ paths:
           required: true
           schema:
             type: string
+            pattern: "^(k_[A-Za-z0-9_-]{20,64}|[0-9A-Fa-f]{24})$"
       responses:
         "200":
           description: Key document
@@ -1026,7 +1031,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
-  /authors:
+  /api/authors:
     post:
       tags:
         - Authors
@@ -1166,7 +1171,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /authors/{authorId}:
+  /api/authors/{authorId}:
     get:
       tags:
         - Authors
@@ -1298,7 +1303,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /authors/{authorId}/public-key:
+  /api/authors/{authorId}/public-key:
     get:
       tags:
         - Authors
@@ -1327,7 +1332,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /content/sign:
+  /api/content/sign:
     post:
       tags:
         - Content
@@ -1405,7 +1410,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
-  /content/verify:
+  /api/content/verify:
     post:
       tags:
         - Content
@@ -1477,7 +1482,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /claims:
+  /api/claims:
     post:
       tags:
         - Claims
@@ -1577,7 +1582,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
-  /claims/{claimId}:
+  /api/claims/{claimId}:
     get:
       tags:
         - Claims
@@ -1606,7 +1611,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /directory/keys:
+  /api/directory/keys:
     get:
       tags:
         - Directory
@@ -1689,7 +1694,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
-  /directory/keys/{keyId}/reputation:
+  /api/directory/keys/{keyId}/reputation:
     get:
       tags:
         - Directory
@@ -1700,10 +1705,10 @@ paths:
         - name: keyId
           in: path
           required: true
-          description: ID of the public key
+          description: Opaque public key id, or a legacy ObjectId accepted by the compatibility route.
           schema:
             type: string
-            format: uuid
+            pattern: "^(k_[A-Za-z0-9_-]{20,64}|[0-9A-Fa-f]{24})$"
       responses:
         "200":
           description: Key reputation
@@ -1718,7 +1723,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /directory/keys/{keyId}/report:
+  /api/directory/keys/{keyId}/report:
     post:
       tags:
         - Directory
@@ -1731,10 +1736,10 @@ paths:
         - name: keyId
           in: path
           required: true
-          description: ID of the public key
+          description: Opaque public key id, or a legacy ObjectId accepted by the compatibility route.
           schema:
             type: string
-            format: uuid
+            pattern: "^(k_[A-Za-z0-9_-]{20,64}|[0-9A-Fa-f]{24})$"
       requestBody:
         required: true
         content:
@@ -1789,7 +1794,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /directory/content:
+  /api/directory/content:
     get:
       tags:
         - Directory
@@ -1869,7 +1874,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
-  /directory/content/{contentHash}/occurrences:
+  /api/directory/content/{contentHash}/occurrences:
     get:
       tags:
         - Directory
@@ -1926,7 +1931,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /directory/content/report:
+  /api/directory/content/report:
     post:
       tags:
         - Directory
@@ -2005,23 +2010,21 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /endorsements:
+  /api/endorsements:
     get:
       tags:
         - Endorsements
-      summary: List endorsements for a content hash
+      summary: List endorsements for a content hash (compatibility)
       description: |
-        Returns all endorsements on file for a given content hash. The
-        directory is a passive store; clients MUST verify each endorsement's
-        signature locally using the endorser's public key (per spec §2.5)
-        before treating it as trustworthy. Unverified endorsements MUST NOT
-        contribute to any trust decision.
-      operationId: listEndorsements
+        Returns all endorsements on file for a given content hash. This
+        legacy `/api` route is public and remains available for pre-v1
+        clients. Clients MUST verify each endorsement locally.
+      operationId: listEndorsementsCompatibility
       parameters:
         - name: content-hash
           in: query
           required: true
-          description: The content hash to look up endorsements for (e.g. "sha256:...")
+          description: The content hash to look up endorsements for (for example, `sha256:...`).
           schema:
             type: string
       responses:
@@ -2070,13 +2073,13 @@ paths:
       description: |
         Stores a structured endorsement document. The signed payload is the
         JSON canonicalization of the endorsement document with `signature`
-        omitted. The canonical endpoint requires RFC 9421 authentication;
-        the `/api/endorsements` compatibility route also accepts the legacy
-        API-key scheme.
+        omitted. The compatibility route accepts either the RFC 9421
+        signature or the legacy general API key scheme.
       operationId: createEndorsement
       security:
         - HttpSignatureInput: []
           HttpMessageSignature: []
+        - GeneralApiKey: []
       requestBody:
         required: true
         content:
@@ -2132,15 +2135,17 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
-  /endorsements/{id}:
+  /api/endorsements/{id}:
     delete:
       tags:
         - Endorsements
-      summary: Delete an endorsement
+      summary: Delete an endorsement (compatibility)
       description: |
-        Removes an endorsement from the directory. The caller must authenticate
-        with the endorsement's key or with the directory administrator key.
-      operationId: deleteEndorsement
+        Removes an endorsement from the legacy `/api` surface. The route
+        accepts an RFC 9421 signature from the endorser or an administrator
+        API key. The route's controller also checks that a signed caller is
+        the endorser before deleting the record.
+      operationId: deleteEndorsementCompatibility
       security:
         - HttpSignatureInput: []
           HttpMessageSignature: []
@@ -2180,6 +2185,75 @@ paths:
                 $ref: "#/components/schemas/Problem"
         "500":
           description: Directory could not delete the endorsement
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /endorsements:
+    post:
+      tags:
+        - Endorsements
+      summary: Submit a signed endorsement for storage
+      description: |
+        Stores a structured endorsement document. The signed payload is the
+        JSON canonicalization of the endorsement document with `signature`
+        omitted. The canonical endpoint requires the exact RFC 9421 HTMLTrust
+        v1 signature profile and has no API-key fallback.
+      operationId: createCanonicalEndorsement
+      security:
+        - HttpSignatureInput: []
+          HttpMessageSignature: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Endorsement"
+          application/htmltrust-endorsement+json:
+            schema:
+              $ref: "#/components/schemas/Endorsement"
+      responses:
+        "201":
+          description: Endorsement stored
+          headers:
+            Cache-Control:
+              schema: { type: string }
+            Location:
+              schema: { type: string }
+          content:
+            application/htmltrust-endorsement+json:
+              schema:
+                $ref: "#/components/schemas/Endorsement"
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Endorsement"
+        "400":
+          description: Invalid input
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "401":
+          description: Unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "406":
+          description: Requested representation is not supported
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "415":
+          description: Request body media type is not supported
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: Verified endorsement could not be stored
           content:
             application/problem+json:
               schema:

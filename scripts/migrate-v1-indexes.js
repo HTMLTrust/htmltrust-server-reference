@@ -14,14 +14,36 @@
  *   npm run migrate:v1
  */
 const mongoose = require('mongoose');
+const crypto = require('crypto');
 const ContentSignature = require('../src/models/ContentSignature');
 const Endorsement = require('../src/models/Endorsement');
+const Key = require('../src/models/Key');
 
 const LEGACY_INDEXES = [
   [ContentSignature, 'contentHash_1_domain_1_authorId_1'],
   [Endorsement, 'contentHash_1_endorser_1'],
   [Endorsement, 'endorsement_1_endorser_1'],
 ];
+
+const missingPublicId = {
+  $or: [{ publicId: { $exists: false } }, { publicId: null }],
+};
+
+const newPublicId = () => `k_${crypto.randomBytes(18).toString('base64url')}`;
+
+const backfillPublicIds = async () => {
+  let updated = 0;
+  const cursor = Key.collection.find(missingPublicId, { projection: { _id: 1 } });
+  for await (const key of cursor) {
+    const result = await Key.collection.updateOne(
+      { _id: key._id, ...missingPublicId },
+      { $set: { publicId: newPublicId() } },
+    );
+    updated += result.modifiedCount;
+  }
+  if (updated > 0) console.log(`backfilled ${updated} key public id(s)`);
+  return updated;
+};
 
 const dropIfPresent = async (model, name) => {
   let indexes;
@@ -46,11 +68,13 @@ const migrate = async () => {
   // different options, which is the reason this migration exists.
   await mongoose.connect(mongoUri, { autoIndex: false });
   try {
+    await backfillPublicIds();
     for (const [model, indexName] of LEGACY_INDEXES) {
       await dropIfPresent(model, indexName);
     }
     // Recreate the current partial/non-unique definitions without touching
     // unrelated indexes owned by an operator or another application.
+    await Key.createIndexes();
     await ContentSignature.createIndexes();
     await Endorsement.createIndexes();
     console.log('v1 index migration complete');
@@ -66,4 +90,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { LEGACY_INDEXES, dropIfPresent, migrate };
+module.exports = { LEGACY_INDEXES, backfillPublicIds, dropIfPresent, migrate };

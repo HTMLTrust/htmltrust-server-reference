@@ -2,6 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
 const { keyDocumentFor } = require("../src/utils/htmltrustProtocol");
+const { publicKeyId } = require("../src/utils/directoryUrl");
+const Key = require("../src/models/Key");
 
 test("directory key documents expose canonical SPKI DER and lifecycle metadata", () => {
   const { publicKey } = crypto.generateKeyPairSync("ed25519", {
@@ -38,4 +40,31 @@ test("directory key documents expose canonical SPKI DER and lifecycle metadata",
       .export({ type: "spki", format: "pem" }),
     publicKey,
   );
+});
+
+test("new directory keys receive an opaque public identifier", () => {
+  const key = new Key({
+    authorId: "507f1f77bcf86cd799439011",
+    publicKey: "-----BEGIN PUBLIC KEY-----\nMIIB\n-----END PUBLIC KEY-----",
+    algorithm: "ed25519",
+  });
+  assert.match(key.publicId, /^k_[A-Za-z0-9_-]{20,}$/);
+  assert.notEqual(key.publicId, String(key._id));
+});
+
+test("legacy hydrated keys keep their ObjectId URL compatibility alias and update safely", () => {
+  const legacyId = "507f1f77bcf86cd799439011";
+  for (const publicId of [undefined, null]) {
+    const key = Key.hydrate({
+      _id: legacyId,
+      authorId: "507f1f77bcf86cd799439012",
+      publicKey: "legacy",
+      algorithm: "ed25519",
+      ...(publicId === null ? { publicId } : {}),
+    });
+    assert.equal(key.publicId, publicId);
+    key.trustScore = 0.75;
+    assert.equal(key.validateSync(), undefined, "legacy key updates must remain valid before migration");
+    assert.equal(publicKeyId(key), legacyId);
+  }
 });
