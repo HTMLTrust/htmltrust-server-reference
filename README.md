@@ -199,7 +199,7 @@ openapi.yaml                  API contract and response schemas
 ## Related repositories
 
 - [HTMLTrust specification](https://github.com/HTMLTrust/htmltrust-spec)
-- [Canonicalization library](https://github.com/HTMLTrust/htmltrust-canonicalization), pinned to `5e51040dcaaf50935e245702bdefbc18a1d542ce` by this package
+- [Canonicalization library](https://github.com/HTMLTrust/htmltrust-canonicalization), pinned to `760593d4a02e9fffa56dc4d002eb52ab2ade1b49` by this package
 - [Browser reference](https://github.com/HTMLTrust/htmltrust-browser-reference)
 - [Browser client](https://github.com/HTMLTrust/htmltrust-browser-client)
 - [End-to-end harness](https://github.com/HTMLTrust/htmltrust-e2e)
