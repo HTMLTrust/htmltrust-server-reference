@@ -1,5 +1,12 @@
 # HTMLTrust Server Reference
 
+- Maintainer: Jason Grey
+- Updated: 2026-08-28
+- Version: 0.1.0, draft v1 API
+- Status: Runnable reference server
+- For: directory operators and integration developers
+- Reading time: 10 minutes
+
 This repository contains the runnable Node.js reference server for the HTMLTrust trust directory API. It stores author profiles and public keys, accepts signed content and endorsements, and exposes directory search and reputation data.
 
 The wire contract is documented in [`openapi.yaml`](openapi.yaml). The server is the implementation used by the local development workflow and the end-to-end simulation.
@@ -130,7 +137,7 @@ Use RFC 9421 signatures for canonical writes. The compatibility surface supports
 | Header | Use |
 |---|---|
 | `X-API-KEY` | General compatibility operations, including author creation, occurrence registration, reporting, and demo submissions |
-| `X-AUTHOR-API-KEY` | Author-specific compatibility operations and the compatibility signing helper |
+| `X-AUTHOR-API-KEY` | Author-specific operations and the v1 convenience signing helper |
 | `X-ADMIN-API-KEY` | Claim-type administration and endorsement takedown |
 
 Author API keys are returned once by `POST /api/authors`. The server stores an HMAC-SHA-256 digest under `AUTHOR_API_KEY_PEPPER`. A deployment that still has plaintext keys must migrate them using the procedure in [`src/utils/apiKeys.js`](src/utils/apiKeys.js), then remove the plaintext field.
@@ -138,8 +145,10 @@ Author API keys are returned once by `POST /api/authors`. The server stores an H
 ### Wire-format details
 
 - Hashes, signatures, and key bytes use unpadded standard Base64.
-- `domain` values are serialized web origins such as `https://publisher.example:8443`.
-- Content signatures bind `contentHash`, `claimsHash`, `domain`, and `signedAt`. `claimsHash` covers the canonical serialization of direct `meta` claims in the signed section.
+- `sourceURL` values sent to `POST /api/content/sign` must be final HTTPS URLs. The `scope` value (`url` or `origin`) determines the derived `location` bound into the v1 signing payload.
+- `POST /api/content/sign` computes `claimsHash` from the strict v1 claims array and signs the RFC 8785 JCS object containing the frozen profile, algorithm, keyid, content hash, claims hash, timestamp, scope, and location. It returns the complete attribute set needed for a `<signed-section>`.
+- The convenience signer uses the newest active directory-held key. It returns the stored artifact for an identical retry. A changed payload for the same content, location, and key returns `409 Conflict` because signed artifacts are immutable.
+- The convenience route rejects the legacy `domain`, `authorId`, and caller-supplied `claimsHash` fields. Use canonical `POST /content` when the author holds the private key and submits an RFC 9421-authenticated signature.
 - Endorsement signatures cover the RFC 8785 JCS serialization of the endorsement document with `signature` omitted. New endorsements are served as signed, and the 201 response supplies the stored identifier in `Location`.
 - Endorsements are append-only. An identical retry on canonical `POST /endorsements` returns `201` with the existing resource in `Location`; the `/api/endorsements` compatibility route returns `200`. A different document from the same endorser and content hash is stored as another record.
 

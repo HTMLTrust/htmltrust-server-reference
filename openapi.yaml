@@ -436,6 +436,89 @@ components:
         createdAt: "2023-01-01T12:00:00Z"
         updatedAt: "2023-01-01T12:00:00Z"
 
+    V1ContentSignature:
+      type: object
+      required:
+        - profile
+        - context
+        - canonicalizationProfile
+        - attributeProfile
+        - urlProfile
+        - contentHash
+        - claimsHash
+        - signedAt
+        - scope
+        - location
+        - sourceURL
+        - keyid
+        - algorithm
+        - signature
+        - claims
+      properties:
+        profile:
+          type: string
+          enum: [htmltrust-signature-v1]
+        context:
+          type: string
+          format: uri
+        canonicalizationProfile:
+          type: string
+          enum: [htmltrust-c14n-v1]
+        attributeProfile:
+          type: string
+          enum: [htmltrust-attrs-v1]
+        urlProfile:
+          type: string
+          enum: [htmltrust-safe-url-v1]
+        contentHash:
+          type: string
+          description: Hash of the canonical signed content
+        claimsHash:
+          type: string
+          description: Directory-computed hash of the canonical v1 claims serialization
+        signedAt:
+          type: string
+          description: Exact UTC timestamp in YYYY-MM-DDTHH:MM:SSZ form
+        scope:
+          type: string
+          enum: [url, origin]
+        location:
+          type: string
+          format: uri
+          description: URL or origin derived from sourceURL under scope
+        sourceURL:
+          type: string
+          format: uri
+          description: Final HTTPS occurrence URL
+        keyid:
+          type: string
+          description: Exact directory key identifier bound into the JCS payload
+        algorithm:
+          type: string
+          description: Canonical signature algorithm identifier
+        signature:
+          type: string
+          description: Signature over the RFC 8785 JCS v1 signing payload
+        claims:
+          type: array
+          items:
+            type: object
+            required: [name, content]
+            additionalProperties: false
+            properties:
+              name: { type: string }
+              content: { type: string }
+        authorId:
+          type: string
+          description: Directory author that owns the signing key
+        domain:
+          type: string
+          format: uri
+          description: Occurrence origin retained for compatibility and indexing
+        createdAt:
+          type: string
+          format: date-time
+
     ContentSignature:
       type: object
       required:
@@ -1250,10 +1333,12 @@ paths:
         - Content
       summary: Sign content
       description: |
-        Compatibility signing helper. The client submits already-computed
-        `contentHash` and `claimsHash` values; the server signs the draft
-        payload `contentHash:claimsHash:domain:signedAt`. `claimsHash` is the
-        hash of all direct child `meta` claims, including `signed-at`.
+        Author-authenticated convenience signer for the frozen
+        `htmltrust-signature-v1` profile. The directory selects the
+        authenticated author's directory-held key, derives `location` from
+        the final HTTPS `sourceURL` and `scope`, computes `claimsHash` from
+        the strict v1 claims array, and signs the RFC 8785 JSON payload. The
+        caller must not submit `claimsHash` or the legacy `domain` field.
       operationId: signContent
       security:
         - AuthorApiKey: []
@@ -1265,35 +1350,42 @@ paths:
               type: object
               required:
                 - contentHash
-                - claimsHash
-                - domain
+                - sourceURL
+                - scope
                 - signedAt
                 - claims
               properties:
                 contentHash:
                   type: string
                   description: Hash of the normalized content using canonical unpadded standard Base64
-                claimsHash:
+                sourceURL:
                   type: string
-                  description: Hash of all direct child meta claims using canonical unpadded standard Base64
-                domain:
+                  format: uri
+                  description: Final HTTPS response URL where the signed section will be published
+                scope:
                   type: string
-                  description: Serialized Web origin associated with the content; bare hostnames are invalid
+                  enum: [url, origin]
+                  description: Location binding scope used to derive the signed location
                 signedAt:
                   type: string
-                  format: date-time
-                  description: UTC RFC3339 timestamp from the direct child signed-at claim
+                  description: Exact UTC timestamp in YYYY-MM-DDTHH:MM:SSZ form, also present in claims
                 claims:
-                  type: object
-                  description: Direct child meta claims about the content; every such claim participates in claimsHash.
-                  additionalProperties: true
+                  type: array
+                  description: Strict v1 claim records. Include exactly one signed-at record.
+                  items:
+                    type: object
+                    required: [name, content]
+                    additionalProperties: false
+                    properties:
+                      name: { type: string }
+                      content: { type: string }
       responses:
         "201":
           description: Content signed successfully
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ContentSignature"
+                $ref: "#/components/schemas/V1ContentSignature"
         "400":
           description: Invalid input
           content:
@@ -1306,6 +1398,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "404":
+          description: No active directory-held signing key exists for the author
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
 
   /content/verify:
     post:

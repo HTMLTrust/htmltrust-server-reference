@@ -131,16 +131,19 @@
               <textarea class="form-control" id="content-text" rows="4" required></textarea>
             </div>
             <div class="mb-3">
-              <label for="content-domain" class="form-label">Domain</label>
-              <input type="text" class="form-control" id="content-domain" value="example.com" required>
+              <label for="content-source-url" class="form-label">Final source URL</label>
+              <input type="url" class="form-control" id="content-source-url" value="https://example.com/articles/demo" required>
+            </div>
+            <div class="mb-3">
+              <label for="content-scope" class="form-label">Signature scope</label>
+              <select class="form-select" id="content-scope">
+                <option value="url" selected>URL</option>
+                <option value="origin">Origin</option>
+              </select>
             </div>
             <div class="mb-3">
               <label for="content-claims" class="form-label">Claims (JSON)</label>
               <textarea class="form-control" id="content-claims" rows="3">{"ContentType": "Article", "License": "CC-BY-4.0"}</textarea>
-            </div>
-            <div class="mb-3">
-              <label for="author-id" class="form-label">Author ID</label>
-              <input type="text" class="form-control" id="author-id" required>
             </div>
             <div class="mb-3">
               <label for="author-api-key" class="form-label">Author API Key</label>

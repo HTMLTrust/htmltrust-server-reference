@@ -144,9 +144,12 @@ const assertSignatureShape = (signature, algorithm) => {
 };
 
 /**
- * Validate a POST /content body and construct the exact v1 signing payload.
+ * Validate the unsigned fields of a v1 content submission and construct the
+ * exact payload that the signature covers.  Directory convenience signers use
+ * this before creating the signature; POST /content uses the same helper and
+ * then verifies the caller-supplied signature.
  */
-const validateV1ContentSubmission = async (body) => {
+const buildV1ContentSigningPayload = async (body) => {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw invalid("the content submission must be a JSON object");
   }
@@ -170,8 +173,6 @@ const validateV1ContentSubmission = async (body) => {
   if (body.location !== location) {
     throw invalid(`location must equal the ${scope} location derived from sourceURL`);
   }
-  const signature = assertSignatureShape(body.signature, algorithm);
-
   const normalizedClaims = await normalizeClaims(body.claims, { strictArray: true });
   const signedAtClaims = normalizedClaims.filter((claim) => claim.name === "signed-at");
   if (signedAtClaims.length !== 1) {
@@ -204,14 +205,25 @@ const validateV1ContentSubmission = async (body) => {
     payload: canonicalizeJcs(signingObject),
     profile: PROFILE.signature,
     scope,
-    signature,
     signedAt,
     sourceURL: body.sourceURL,
   };
 };
 
+/**
+ * Validate a POST /content body and construct the exact v1 signing payload.
+ */
+const validateV1ContentSubmission = async (body) => {
+  const prepared = await buildV1ContentSigningPayload(body);
+  return {
+    ...prepared,
+    signature: assertSignatureShape(body.signature, prepared.algorithm),
+  };
+};
+
 module.exports = {
   assertV1Timestamp,
+  buildV1ContentSigningPayload,
   deriveLocation,
   hashCanonicalClaims,
   PROFILE,

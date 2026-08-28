@@ -33,12 +33,14 @@ steps:
         X-AUTHOR-API-KEY: $authorApiKey
       body:
         contentHash: "sha256:82rHSQ/ThLduI0bbHYOVbxn5mEXR0FxMzn6YsVHSwSs"
-        claimsHash: "sha256:M9aSt+kY8XVWfoAaE4jJEbxdU2sOw01Kr8BU/vhyoUo"
-        domain: "https://retrieval.example.com"
-        signedAt: "2026-05-12T12:00:00.000Z"
+        sourceURL: "https://retrieval.example.com/articles/04"
+        scope: "url"
+        signedAt: "2026-05-12T12:00:00Z"
         claims:
-          signed-at: "2026-05-12T12:00:00.000Z"
-          ContentType: "Article"
+          - name: "signed-at"
+            content: "2026-05-12T12:00:00Z"
+          - name: "claim:ContentType"
+            content: "Article"
     expect:
       status: 201
 
