@@ -18,7 +18,12 @@ const KeySchema = new mongoose.Schema({
   // alias until they are rewritten.
   publicId: {
     type: String,
-    required: true,
+    // New keys always receive the default below. Legacy hydrated keys may
+    // still omit this field until migrate:v1 backfills them, so updates to
+    // those rows must remain valid during the migration window.
+    required: function publicIdRequired() {
+      return this.isNew || this.publicId !== undefined;
+    },
     unique: true,
     sparse: true,
     index: true,

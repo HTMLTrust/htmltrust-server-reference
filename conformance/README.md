@@ -48,7 +48,7 @@ cd conformance/runner
 npm install               # one-time
 node run.mjs \
   --target-url   http://your-server.example \
-  --base-path    /v1 \
+  --base-path    /api \
   --general-api-key YOUR_GENERAL_KEY \
   --admin-api-key   YOUR_ADMIN_KEY
 ```
@@ -58,7 +58,7 @@ All flags:
 | Flag | Default | Description |
 |---|---|---|
 | `--target-url URL` | `http://localhost:3000` | Base URL of the server |
-| `--base-path PATH` | `/api` | Prefix prepended to spec paths. Use `/v1` for spec-conformant servers, `/api` for the Node reference, or `""` for none. |
+| `--base-path PATH` | `/api` | Prefix prepended to the fixture's logical compatibility paths. Use `/api` for the Node reference or `""` when the target mounts those compatibility paths at the origin. Canonical v1 root paths are exercised separately by `runner/v1-smoke.mjs` and are never prefixed. |
 | `--general-api-key KEY` | env `GENERAL_API_KEY` | Value for `X-API-KEY` |
 | `--admin-api-key KEY` | env `ADMIN_API_KEY` | Value for `X-ADMIN-API-KEY` |
 | `--fixtures-dir DIR` | `../fixtures` | Where YAML fixtures live |
@@ -175,15 +175,19 @@ the Node reference.
    responses.** `openapi.yaml` does not forbid extra properties, so this is
    technically tolerable; the `--accept-mongo-ids` flag also accepts `_id` as
    a capture fallback.
-3. **API is mounted under `/api/…` instead of `/v1/…`** as the spec's
-   `servers` block implies. `--base-path /api` accommodates this; other
-   implementations should use `/v1` or `""` as appropriate.
+3. **The fixture files use logical compatibility paths such as `/authors` and
+   `/directory/keys`.** The published OpenAPI contract names their runtime
+   paths with the `/api` prefix. The runner adds `--base-path` to fixture URLs
+   and uses named schemas rather than looking up paths in OpenAPI, so this
+   keeps the fixtures reusable without hiding the deployed route prefix.
 4. **`/votes` endpoints are implemented but not documented in
    `openapi.yaml`.** Fixtures 05, 06, and 09 exercise them anyway since the
    spec text references endorsement/trust voting. A future spec revision
    is expected to formalize them.
 
-Running the suite in **strict** mode against the reference (drop
-`--accept-mongo-ids`, use `--base-path ""`, and target a spec-conformant
-server) will surface the compatibility deviations immediately; that is the intended
-behaviour for verifying other implementations.
+For a strict check against another implementation, use a target and
+`--base-path` that match its published compatibility routes, omit
+`--accept-mongo-ids`, and run the canonical v1 smoke against the unprefixed
+root paths. The Node reference intentionally keeps its `/api` routes for
+backward compatibility while its canonical v1 directory surface is rooted at
+`/`.

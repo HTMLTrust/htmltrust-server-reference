@@ -220,6 +220,7 @@ components:
         id:
           type: string
           description: Opaque public identifier for the key document
+          pattern: "^(k_[A-Za-z0-9_-]{20,64}|[0-9A-Fa-f]{24})$"
         authorId:
           type: string
           format: uuid
@@ -757,6 +758,7 @@ paths:
           required: true
           schema:
             type: string
+            pattern: "^(k_[A-Za-z0-9_-]{20,64}|[0-9A-Fa-f]{24})$"
       responses:
         "200":
           description: Key document
@@ -1029,7 +1031,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
-  /authors:
+  /api/authors:
     post:
       tags:
         - Authors
@@ -1169,7 +1171,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /authors/{authorId}:
+  /api/authors/{authorId}:
     get:
       tags:
         - Authors
@@ -1301,7 +1303,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /authors/{authorId}/public-key:
+  /api/authors/{authorId}/public-key:
     get:
       tags:
         - Authors
@@ -1330,7 +1332,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /content/sign:
+  /api/content/sign:
     post:
       tags:
         - Content
@@ -1408,7 +1410,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
-  /content/verify:
+  /api/content/verify:
     post:
       tags:
         - Content
@@ -1480,7 +1482,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /claims:
+  /api/claims:
     post:
       tags:
         - Claims
@@ -1580,7 +1582,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
-  /claims/{claimId}:
+  /api/claims/{claimId}:
     get:
       tags:
         - Claims
@@ -1609,7 +1611,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /directory/keys:
+  /api/directory/keys:
     get:
       tags:
         - Directory
@@ -1692,7 +1694,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
-  /directory/keys/{keyId}/reputation:
+  /api/directory/keys/{keyId}/reputation:
     get:
       tags:
         - Directory
@@ -1706,6 +1708,7 @@ paths:
           description: Opaque public key id, or a legacy ObjectId accepted by the compatibility route.
           schema:
             type: string
+            pattern: "^(k_[A-Za-z0-9_-]{20,64}|[0-9A-Fa-f]{24})$"
       responses:
         "200":
           description: Key reputation
@@ -1720,7 +1723,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /directory/keys/{keyId}/report:
+  /api/directory/keys/{keyId}/report:
     post:
       tags:
         - Directory
@@ -1736,6 +1739,7 @@ paths:
           description: Opaque public key id, or a legacy ObjectId accepted by the compatibility route.
           schema:
             type: string
+            pattern: "^(k_[A-Za-z0-9_-]{20,64}|[0-9A-Fa-f]{24})$"
       requestBody:
         required: true
         content:
@@ -1790,7 +1794,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /directory/content:
+  /api/directory/content:
     get:
       tags:
         - Directory
@@ -1870,7 +1874,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Problem"
 
-  /directory/content/{contentHash}/occurrences:
+  /api/directory/content/{contentHash}/occurrences:
     get:
       tags:
         - Directory
@@ -1927,7 +1931,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /directory/content/report:
+  /api/directory/content/report:
     post:
       tags:
         - Directory
@@ -2006,7 +2010,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
-  /endorsements:
+  /api/endorsements:
     post:
       tags:
         - Endorsements
@@ -2075,3 +2079,7 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/Problem"
+
+  /endorsements:
+    post:
+      $ref: "#/paths/~1api~1endorsements/post"

@@ -29,6 +29,13 @@ const requestJson = async (url, init = {}, expectedStatus = 200) => {
   return { response, body };
 };
 
+const assertMediaType = ({ response }, expected, label) => {
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.startsWith(expected)) {
+    fail(`${label} returned ${contentType}, expected ${expected}`);
+  }
+};
+
 const canonicalize = (value) => {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
@@ -68,6 +75,7 @@ const signHttpRequest = ({
     host: parsed.host,
     date,
     "content-digest": contentDigest,
+    "content-type": "application/json",
     "@request-target": parsed.pathname + parsed.search,
   };
   const base = [
@@ -121,6 +129,7 @@ const main = async () => {
   const keyid = `${target}/keys/${keyId}`;
 
   const discovery = await requestJson(`${target}/.well-known/htmltrust`);
+  assertMediaType(discovery, "application/htmltrust-directory+json", "discovery");
   if (!discovery.body.supportedProfiles?.includes("htmltrust-signature-v1")) {
     fail("discovery does not advertise htmltrust-signature-v1", discovery.body);
   }
@@ -131,12 +140,14 @@ const main = async () => {
   await requestJson(`${target}/endorsements/000000000000000000000000`, { method: "DELETE" }, 404);
 
   const keyDocument = await requestJson(keyid);
+  assertMediaType(keyDocument, "application/htmltrust-key+json", "key document");
   if (keyDocument.body.kid !== keyid || keyDocument.body.publicKeyPem !== undefined) {
     fail("root key document has the wrong kid or exposes the PEM compatibility field", keyDocument.body);
   }
   const reputation = await requestJson(
     `${target}/signers/${encodeURIComponent(keyId)}/reputation`,
   );
+  assertMediaType(reputation, "application/json", "signer reputation");
   if (reputation.body.keyid !== keyId || typeof reputation.body.score !== "number") {
     fail("root signer reputation has the wrong key identifier or score", reputation.body);
   }
@@ -191,6 +202,7 @@ const main = async () => {
     privateKey: signingKey.privateKey,
     nonce: "content-valid",
   });
+  assertMediaType(submitted, "application/htmltrust-content+json", "content submission");
   if (submitted.response.headers.get("location") !== `/content/${encodeURIComponent(contentHash)}`) {
     fail("POST /content returned the wrong Location header", submitted.response.headers.get("location"));
   }
@@ -204,7 +216,8 @@ const main = async () => {
     fail("POST /content returned an incomplete v1 signer record", submitted.body);
   }
 
-  await requestJson(`${target}/content/${encodeURIComponent(contentHash)}`);
+  const content = await requestJson(`${target}/content/${encodeURIComponent(contentHash)}`);
+  assertMediaType(content, "application/htmltrust-content+json", "content record");
 
   const badLocation = { ...submission, location: "https://example.com/research/other" };
   const rejectedLocation = await signedPost({
@@ -254,6 +267,11 @@ const main = async () => {
       nonce: "content-missing-alg",
     },
     {
+      name: "additional covered component",
+      components: ["@method", "@target-uri", "host", "date", "content-digest", "content-type"],
+      nonce: "content-additional-component",
+    },
+    {
       name: "padded signature bytes",
       padded: true,
       nonce: "content-padded-signature",
@@ -291,13 +309,14 @@ const main = async () => {
       signingKey.privateKey,
     )),
   };
-  await signedPost({
+  const submittedEndorsement = await signedPost({
     path: "/endorsements",
     document: endorsement,
     keyid,
     privateKey: signingKey.privateKey,
     nonce: "endorsement-valid",
   });
+  assertMediaType(submittedEndorsement, "application/htmltrust-endorsement+json", "endorsement submission");
   await signedPost({
     path: "/endorsements",
     document: endorsement,
@@ -308,6 +327,7 @@ const main = async () => {
   const endorsements = await requestJson(
     `${target}/content/${encodeURIComponent(contentHash)}/endorsements`,
   );
+  assertMediaType(endorsements, "application/htmltrust-endorsement+json", "endorsement listing");
   if (!Array.isArray(endorsements.body) || endorsements.body.length !== 1) {
     fail("root content endorsement listing did not return the stored document", endorsements.body);
   }

@@ -61,5 +61,7 @@ test("legacy hydrated keys keep their ObjectId URL compatibility alias", () => {
     algorithm: "ed25519",
   });
   assert.equal(key.publicId, undefined);
+  key.trustScore = 0.75;
+  assert.equal(key.validateSync(), undefined, "legacy key updates must remain valid before migration");
   assert.equal(publicKeyId(key), legacyId);
 });

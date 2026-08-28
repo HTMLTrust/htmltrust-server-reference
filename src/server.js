@@ -10,10 +10,12 @@ dotenv.config();
 
 const { problem } = require('./utils/htmltrustProtocol');
 const { assertConfigured } = require('./utils/apiKeys');
+const { assertDirectoryBaseUrl } = require('./utils/directoryUrl');
 
 // Fail fast on a misconfigured production deployment rather than at the first
 // request that happens to need the missing secret.
 assertConfigured();
+assertDirectoryBaseUrl();
 
 // Database connection
 const connectDB = require('./config/db');

@@ -5,7 +5,14 @@ const directoryBaseUrl = (req, env = process.env) => {
     if (url.protocol !== 'http:' && url.protocol !== 'https:') {
       throw new Error('DIRECTORY_BASE_URL must use http or https');
     }
+    if (env.NODE_ENV === 'production' && url.protocol !== 'https:') {
+      throw new Error('DIRECTORY_BASE_URL must use https in production');
+    }
     return url.href.replace(/\/$/, '');
+  }
+
+  if (env.NODE_ENV === 'production') {
+    throw new Error('DIRECTORY_BASE_URL must be set in production');
   }
 
   // The request-origin fallback keeps local development and the conformance
@@ -19,4 +26,9 @@ const directoryKeyUrl = (req, keyId, env = process.env) =>
 
 const publicKeyId = (key) => String(key.publicId || key._id);
 
-module.exports = { directoryBaseUrl, directoryKeyUrl, publicKeyId };
+const assertDirectoryBaseUrl = (env = process.env) => {
+  if (env.NODE_ENV !== 'production') return;
+  directoryBaseUrl(null, env);
+};
+
+module.exports = { assertDirectoryBaseUrl, directoryBaseUrl, directoryKeyUrl, publicKeyId };
