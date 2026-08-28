@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const crypto = require('crypto');
 
 const KeySchema = new mongoose.Schema({
   authorId: {
@@ -9,6 +10,24 @@ const KeySchema = new mongoose.Schema({
   publicKey: {
     type: String,
     required: [true, 'Public key is required']
+  },
+  // Opaque public identifier used in directory key URLs. The Mongo `_id` is
+  // storage metadata and must not be the protocol-facing key identifier.
+  // `sparse` keeps existing pre-v1 rows resolvable during migration; legacy
+  // rows without publicId continue to use their ObjectId as a compatibility
+  // alias until they are rewritten.
+  publicId: {
+    type: String,
+    required: true,
+    unique: true,
+    sparse: true,
+    index: true,
+    // Mongoose hydrates defaults onto legacy rows too. Only generate this
+    // value for new documents, so an old row without publicId remains
+    // addressable through its historical ObjectId compatibility alias.
+    default: function generatePublicId() {
+      return this.isNew ? `k_${crypto.randomBytes(18).toString('base64url')}` : undefined;
+    },
   },
   // Only populated when the directory generated the key pair on the author's
   // behalf. Authors who register their own public key keep custody of the

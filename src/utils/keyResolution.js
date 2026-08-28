@@ -34,14 +34,16 @@ const REMOTE_ENABLED = () => process.env.HTMLTRUST_REMOTE_KEY_RESOLUTION === "1"
 const REMOTE_TIMEOUT_MS = 5000;
 const REMOTE_MAX_BYTES = 64 * 1024;
 const OBJECT_ID = /^[0-9a-fA-F]{24}$/;
+const OPAQUE_KEY_ID = /^k_[A-Za-z0-9_-]{20,64}$/;
 
 /**
- * Pull a directory key id out of a keyid string. Accepts a bare ObjectId or
- * any URL whose path contains a `/keys/{id}` segment (draft §8.3).
+ * Pull a directory key id out of a keyid string. Accepts a bare legacy
+ * ObjectId or an opaque public id in a URL whose path contains a
+ * `/keys/{id}` segment (draft §8.3).
  */
 const directoryKeyIdFrom = (keyid) => {
   if (typeof keyid !== "string" || keyid.length === 0) return null;
-  if (OBJECT_ID.test(keyid)) return keyid;
+  if (OBJECT_ID.test(keyid) || OPAQUE_KEY_ID.test(keyid)) return keyid;
   let url;
   try {
     url = new URL(keyid);
@@ -52,7 +54,7 @@ const directoryKeyIdFrom = (keyid) => {
   const keysIndex = segments.lastIndexOf("keys");
   if (keysIndex === -1 || !segments[keysIndex + 1]) return null;
   const candidate = decodeURIComponent(segments[keysIndex + 1]);
-  return OBJECT_ID.test(candidate) ? candidate : null;
+  return OBJECT_ID.test(candidate) || OPAQUE_KEY_ID.test(candidate) ? candidate : null;
 };
 
 /**
@@ -63,7 +65,7 @@ const directoryKeyIdFrom = (keyid) => {
  */
 const isSelfHosted = (keyid, selfOrigins) => {
   if (typeof keyid !== "string") return false;
-  if (OBJECT_ID.test(keyid)) return true;
+  if (OBJECT_ID.test(keyid) || OPAQUE_KEY_ID.test(keyid)) return true;
   try {
     const url = new URL(keyid);
     return selfOrigins.includes(`${url.protocol}//${url.host}`.toLowerCase());
@@ -183,7 +185,9 @@ const resolveLocal = async (keyid, selfOrigins, requestedAlgorithm) => {
   if (!isSelfHosted(keyid, selfOrigins)) return null;
   const id = directoryKeyIdFrom(keyid);
   if (!id) return null;
-  const key = await Key.findById(id);
+  const key = OBJECT_ID.test(id)
+    ? await Key.findById(id)
+    : await Key.findOne({ publicId: id });
   if (!key) return null;
   const algorithm = normalizeAlgorithm(key.algorithm);
   if (requestedAlgorithm && algorithm !== requestedAlgorithm) return null;

@@ -162,19 +162,19 @@ If you need a richer validator, swap in `ajv` — `validate()` in
 
 ## Known deviations of the Node reference
 
-For transparency — these were observed while building the suite. They are
-**not** fixed in this task (out of scope), but the suite is configured to
-work around them when run against the Node reference.
+The following compatibility notes describe behavior retained on the legacy
+`/api` surface. The suite is configured to work around them when run against
+the Node reference.
 
-1. **`id` fields are 24-char MongoDB ObjectIds, not RFC-4122 UUIDs.**
-   `openapi.yaml` specifies `format: uuid` for every id field. The Node
-   reference simply emits the underlying Mongoose `_id`. The
-   `--accept-mongo-ids` flag relaxes UUID checks to also accept ObjectIds.
-2. **Mongoose `_id` is exposed alongside the spec's `id` in many responses.**
-   `openapi.yaml` doesn't forbid extra properties (no `additionalProperties:
-   false`), so this is technically tolerable; but it leaks implementation
-   detail and a strict OpenAPI validator could complain. The same flag
-   permits `_id` as a synonym for `id`.
+1. **Compatibility author ids remain 24-char MongoDB ObjectIds.**
+   Canonical key-document ids are opaque public ids, while the older author
+   and compatibility-resource envelopes still expose their historical
+   ObjectId values. The `--accept-mongo-ids` flag relaxes UUID checks for those
+   compatibility fields.
+2. **Mongoose `_id` is exposed alongside the spec's `id` in some compatibility
+   responses.** `openapi.yaml` does not forbid extra properties, so this is
+   technically tolerable; the `--accept-mongo-ids` flag also accepts `_id` as
+   a capture fallback.
 3. **API is mounted under `/api/…` instead of `/v1/…`** as the spec's
    `servers` block implies. `--base-path /api` accommodates this; other
    implementations should use `/v1` or `""` as appropriate.
@@ -185,5 +185,5 @@ work around them when run against the Node reference.
 
 Running the suite in **strict** mode against the reference (drop
 `--accept-mongo-ids`, use `--base-path ""`, and target a spec-conformant
-server) will surface deviations 1 and 2 immediately; that is the intended
+server) will surface the compatibility deviations immediately; that is the intended
 behaviour for verifying other implementations.

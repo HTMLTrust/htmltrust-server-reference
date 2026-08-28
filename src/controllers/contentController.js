@@ -17,7 +17,7 @@ const {
   problem,
 } = require('../utils/htmltrustProtocol');
 const { canonicalizeClaims } = require('../utils/claims');
-const { directoryKeyUrl } = require('../utils/directoryUrl');
+const { directoryKeyUrl, publicKeyId } = require('../utils/directoryUrl');
 const {
   buildV1ContentSigningPayload,
   deriveLocation,
@@ -111,7 +111,7 @@ const validateSignatureInputs = ({ contentHash, claimsHash, domain, signedAt, si
   };
 };
 
-const keyidFor = (req, key) => directoryKeyUrl(req, key._id);
+const keyidFor = (req, key) => directoryKeyUrl(req, publicKeyId(key));
 
 /**
  * Resolve a submitted keyid to a usable key, honouring revocation and expiry

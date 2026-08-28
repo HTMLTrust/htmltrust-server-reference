@@ -41,31 +41,48 @@ const canonicalize = (value) => {
 const unpadded = (buffer) => buffer.toString("base64").replace(/=+$/, "");
 const prefixedSha256 = (text) => `sha256:${unpadded(createHash("sha256").update(text).digest())}`;
 
-const signHttpRequest = ({ url, body, keyid, privateKey, nonce }) => {
+const signHttpRequest = ({
+  url,
+  body,
+  keyid,
+  privateKey,
+  nonce,
+  components = ["@method", "@target-uri", "host", "date", "content-digest"],
+  label = "sig1",
+  includeAlg = true,
+  padded = false,
+}) => {
   const parsed = new URL(url);
   const date = new Date().toUTCString();
   const created = Math.floor(Date.now() / 1000);
   const digest = createHash("sha256").update(body).digest("base64");
   const contentDigest = `sha-256=:${digest}:`;
   const parameters =
-    `("@method" "@target-uri" "host" "date" "content-digest")` +
-    `;created=${created};keyid="${keyid}";alg="ed25519";nonce="${nonce}"`;
+    `(${components.map((component) => `"${component}"`).join(" ")})` +
+    `;created=${created};keyid="${keyid}"` +
+    (includeAlg ? `;alg="ed25519"` : "") +
+    `;nonce="${nonce}"`;
+  const values = {
+    "@method": "POST",
+    "@target-uri": url,
+    host: parsed.host,
+    date,
+    "content-digest": contentDigest,
+    "@request-target": parsed.pathname + parsed.search,
+  };
   const base = [
-    '"@method": POST',
-    `"@target-uri": ${url}`,
-    `"host": ${parsed.host}`,
-    `"date": ${date}`,
-    `"content-digest": ${contentDigest}`,
+    ...components.map((component) => `"${component}": ${values[component]}`),
     `"@signature-params": ${parameters}`,
   ].join("\n");
-  const signature = unpadded(cryptoSign(null, Buffer.from(base, "utf8"), privateKey));
+  let signature = cryptoSign(null, Buffer.from(base, "utf8"), privateKey).toString("base64");
+  if (!padded) signature = unpadded(Buffer.from(signature, "base64"));
   return {
     "content-type": "application/json",
     host: parsed.host,
     date,
     "content-digest": contentDigest,
-    "signature-input": `sig1=${parameters}`,
-    signature: `sig1=:${signature}:`,
+    "signature-input": `${label}=${parameters}`,
+    signature: `${label}=:${signature}${padded ? "=" : ""}:`,
   };
 };
 
@@ -110,10 +127,18 @@ const main = async () => {
   if (discovery.body.directory !== `${target}/`) {
     fail("discovery directory does not name the canonical root", discovery.body);
   }
+  await requestJson(`${target}/endorsements?content-hash=sha256:removed-root-list-route`, {}, 404);
+  await requestJson(`${target}/endorsements/000000000000000000000000`, { method: "DELETE" }, 404);
 
   const keyDocument = await requestJson(keyid);
   if (keyDocument.body.kid !== keyid || keyDocument.body.publicKeyPem !== undefined) {
     fail("root key document has the wrong kid or exposes the PEM compatibility field", keyDocument.body);
+  }
+  const reputation = await requestJson(
+    `${target}/signers/${encodeURIComponent(keyId)}/reputation`,
+  );
+  if (reputation.body.keyid !== keyId || typeof reputation.body.score !== "number") {
+    fail("root signer reputation has the wrong key identifier or score", reputation.body);
   }
 
   const signedAt = "2026-01-15T12:00:00Z";
@@ -206,6 +231,51 @@ const main = async () => {
     fail("canonical POST /content accepted API-key fallback or omitted its signature challenge");
   }
 
+  const submissionBody = JSON.stringify(submission);
+  const signatureProfileCases = [
+    {
+      name: "legacy request-target component",
+      components: ["@method", "@request-target", "host", "date", "content-digest"],
+      nonce: "content-legacy-target",
+    },
+    {
+      name: "reordered components",
+      components: ["@target-uri", "@method", "host", "date", "content-digest"],
+      nonce: "content-reordered-components",
+    },
+    {
+      name: "wrong signature label",
+      label: "other",
+      nonce: "content-wrong-label",
+    },
+    {
+      name: "missing alg parameter",
+      includeAlg: false,
+      nonce: "content-missing-alg",
+    },
+    {
+      name: "padded signature bytes",
+      padded: true,
+      nonce: "content-padded-signature",
+    },
+  ];
+  for (const profileCase of signatureProfileCases) {
+    const rejected = await requestJson(`${target}/content`, {
+      method: "POST",
+      headers: signHttpRequest({
+        url: `${target}/content`,
+        body: submissionBody,
+        keyid,
+        privateKey: signingKey.privateKey,
+        ...profileCase,
+      }),
+      body: submissionBody,
+    }, 401);
+    if (!rejected.response.headers.get("www-authenticate")) {
+      fail(`canonical POST /content accepted ${profileCase.name}`);
+    }
+  }
+
   const unsignedEndorsement = {
     endorser: keyid,
     endorsement: contentHash,
@@ -242,7 +312,7 @@ const main = async () => {
     fail("root content endorsement listing did not return the stored document", endorsements.body);
   }
 
-  console.log("HTMLTrust v1 directory smoke: 12 checks passed");
+  console.log("HTMLTrust v1 directory smoke: canonical operations and signature profile checks passed");
 };
 
 main().catch((error) => {

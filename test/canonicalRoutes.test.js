@@ -10,6 +10,8 @@ test('canonical endorsement creation returns a canonical resource Location', () 
   assert.doesNotMatch(endorsementSource, /\.location\(`\/api\/endorsements\/\$\{stored\._id\}`\)/);
 });
 
-test('canonical endorsement deletion is registered', () => {
-  assert.match(serverSource, /app\.delete\(\s*['"]\/endorsements\/:id['"]/s);
+test('canonical root exposes only the normative endorsement write', () => {
+  assert.match(serverSource, /app\.post\(\s*['"]\/endorsements['"]/s);
+  assert.doesNotMatch(serverSource, /app\.get\(\s*['"]\/endorsements['"]/s);
+  assert.doesNotMatch(serverSource, /app\.delete\(\s*['"]\/endorsements\/:id['"]/s);
 });

@@ -9,7 +9,7 @@ const {
   problem,
   safeSearchRegex,
 } = require('../utils/htmltrustProtocol');
-const { directoryBaseUrl, directoryKeyUrl } = require('../utils/directoryUrl');
+const { directoryBaseUrl, directoryKeyUrl, publicKeyId } = require('../utils/directoryUrl');
 const { negotiatedType } = require('../middleware/contentNegotiation');
 
 /**
@@ -44,6 +44,32 @@ const keyIdFromSignerId = (id) => {
   return null;
 };
 
+const OPAQUE_KEY_ID = /^k_[A-Za-z0-9_-]{20,64}$/;
+const MONGO_KEY_ID = /^[0-9a-fA-F]{24}$/;
+
+const decodedKeyId = (value) => {
+  if (typeof value !== 'string') return null;
+  let decoded;
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+  return MONGO_KEY_ID.test(decoded) || OPAQUE_KEY_ID.test(decoded) ? decoded : null;
+};
+
+// New keys are addressed by their opaque publicId. Existing rows remain
+// readable through their historical Mongo ObjectId until they are migrated.
+const findDirectoryKey = async (value) => {
+  const id = decodedKeyId(value);
+  if (!id) return null;
+  if (MONGO_KEY_ID.test(id)) {
+    const legacy = await Key.findById(id);
+    if (legacy) return legacy;
+  }
+  return Key.findOne({ publicId: id });
+};
+
 exports.discovery = async (req, res) => {
   res
     .type(negotiatedType(req, 'application/htmltrust-directory+json'))
@@ -72,19 +98,20 @@ exports.discovery = async (req, res) => {
 };
 
 exports.getKeyDocument = async (req, res) => {
-  if (!/^[0-9a-fA-F]{24}$/.test(req.params.id)) {
-    return problem(res, 400, 'Invalid key id', 'The key id must be a 24-character hexadecimal identifier');
+  const id = decodedKeyId(req.params.id);
+  if (!id) {
+    return problem(res, 400, 'Invalid key id', 'The key id must be a valid opaque path identifier');
   }
 
   try {
-    const key = await Key.findById(req.params.id);
+    const key = await findDirectoryKey(id);
     if (!key) {
       return problem(res, 404, 'Key not found', 'No key document exists for the requested id');
     }
     res
       .type(negotiatedType(req, 'application/htmltrust-key+json'))
       .status(200)
-      .json(keyDocumentFor(key, directoryKeyUrl(req, key._id)));
+      .json(keyDocumentFor(key, directoryKeyUrl(req, publicKeyId(key))));
   } catch (error) {
     console.error('Get key document error:', error);
     return problem(res, 500, 'Directory read failure', 'The directory could not read the key document', {
@@ -105,7 +132,10 @@ exports.getSignerReputation = async (req, res) => {
     const keyId = keyIdFromSignerId(signerId);
     let key = null;
     if (keyId) {
-      key = await Key.findById(keyId);
+      key = await findDirectoryKey(keyId);
+    }
+    if (!key && OPAQUE_KEY_ID.test(signerId)) {
+      key = await findDirectoryKey(signerId);
     }
     if (!key && /^[0-9a-fA-F]{24}$/.test(signerId)) {
       key = await Key.findOne({ authorId: signerId });
@@ -193,6 +223,7 @@ exports.searchPublicKeys = async (req, res) => {
       {
         $project: {
           _id: 1,
+          publicId: 1,
           authorId: 1,
           publicKey: 1,
           algorithm: 1,
@@ -208,9 +239,15 @@ exports.searchPublicKeys = async (req, res) => {
     
     // Get total count
     const total = await Key.countDocuments(query);
+    const publicKeys = keys.map((key) => ({
+      ...key,
+      id: key.publicId || String(key._id),
+    }));
     
     res.status(200).json({
-      keys: normalizedDomain ? keys.filter((key) => key.author && key.author.url && key.author.url.startsWith(normalizedDomain)) : keys,
+      keys: normalizedDomain
+        ? publicKeys.filter((key) => key.author && key.author.url && key.author.url.startsWith(normalizedDomain))
+        : publicKeys,
       pagination: {
         total,
         pages: Math.ceil(total / pageSize),
@@ -237,7 +274,7 @@ exports.searchPublicKeys = async (req, res) => {
  */
 exports.getKeyReputation = async (req, res) => {
   try {
-    const key = await Key.findById(req.params.keyId);
+    const key = await findDirectoryKey(req.params.keyId);
     
     if (!key) {
       return res.status(404).json({
@@ -247,7 +284,7 @@ exports.getKeyReputation = async (req, res) => {
     }
     
     res.status(200).json({
-      keyId: key._id,
+      keyId: publicKeyId(key),
       trustScore: key.trustScore,
       verifiedSignatures: key.verifiedSignatures,
       reports: key.reports,
@@ -272,7 +309,7 @@ exports.reportKey = async (req, res) => {
     const { reason, details, evidence } = req.body;
     
     // Find key
-    const key = await Key.findById(req.params.keyId);
+    const key = await findDirectoryKey(req.params.keyId);
     
     if (!key) {
       return res.status(404).json({

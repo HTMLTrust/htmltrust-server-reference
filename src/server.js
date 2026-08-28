@@ -128,8 +128,6 @@ const {
 } = require('./controllers/contentController');
 const {
   createEndorsement,
-  listEndorsements,
-  deleteEndorsement,
 } = require('./controllers/endorsementController');
 const {
   getKeyDocument,
@@ -153,22 +151,12 @@ app.get(
   negotiate('application/htmltrust-content+json'),
   getContentRecordV1,
 );
-app.get(
-  '/endorsements',
-  negotiate('application/htmltrust-endorsement+json'),
-  listEndorsements,
-);
 app.post(
   '/endorsements',
   writeLimiter,
   negotiate('application/htmltrust-endorsement+json', { cacheControl: 'no-store', requestBody: true }),
   requireActorSignature({ strictV1: true }),
   createEndorsement,
-);
-app.delete(
-  '/endorsements/:id',
-  requireActorSignature({ fallback: (req, res, next) => next() }),
-  deleteEndorsement,
 );
 app.get('/keys/:id', negotiate('application/htmltrust-key+json'), getKeyDocument);
 app.get(
