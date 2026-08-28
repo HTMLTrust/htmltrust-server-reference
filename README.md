@@ -1,228 +1,180 @@
-# HTMLTrust Server Reference (Node.js)
+# HTMLTrust Server Reference
 
-Runnable Node.js reference implementation of the HTMLTrust trust directory API. It manages author identities, cryptographic key pairs, content signing and verification, and a federated trust directory with reputation tracking.
+This repository contains the runnable Node.js reference server for the HTMLTrust trust directory API. It stores author profiles and public keys, accepts signed content and endorsements, and exposes directory search and reputation data.
 
-This is a companion to the [HTMLTrust specification](https://github.com/HTMLTrust/htmltrust-spec).
-
-## Current status
-
-This repository is the runnable Node.js reference server used for local development and the end-to-end simulation. The sibling Python and Rust repositories are design scaffolds with no runnable server code and make no conformance claim.
-
-## Prerequisites
-
-- Node.js 22+
-- MongoDB, local or remote
+The wire contract is documented in [`openapi.yaml`](openapi.yaml). The server is the implementation used by the local development workflow and the end-to-end simulation.
 
 ## Quick start
+
+### Requirements
+
+For a local Node run, install:
+
+- Node.js 22 or newer
+- MongoDB 7 or a compatible MongoDB deployment
+
+Docker users can run the complete test suite without installing Node.js or MongoDB. See [Test in Docker](#test-in-docker).
+
+### Checkout, install, and run
 
 ```sh
 git clone https://github.com/HTMLTrust/htmltrust-server-reference.git
 cd htmltrust-server-reference
 npm ci
-cp .env.example .env    # Edit with your values
-npm run dev             # Starts with nodemon (auto-reload)
+cp .env.example .env
+npm run dev
 ```
 
-The server starts at `http://localhost:3000`. A demo web UI is available at the root URL. See [Environment Variables](#environment-variables) for required production settings.
+Set `MONGO_URI` in `.env` to the database used by the server. The default development URI is `mongodb://localhost:27017/content-signing`, and the server listens on port `3000`. Open `http://localhost:3000/` for the demo page.
 
-Run the unit tests with `npm test`. The full API conformance suite needs a disposable MongoDB instance; see [Tests](#tests).
+`npm run dev` uses nodemon. Use `npm start` for a regular Node process.
 
-## Personality: the "permissive community directory"
+### Run tests
 
-The HTMLTrust protocol is federated, meaning multiple trust directories MAY coexist with different curatorial philosophies. This Node.js implementation is the baseline reference: full-featured, permissive, and neutral, suitable for general-purpose deployment and for exercising the OpenAPI endpoints.
-
-The sibling reference implementations demonstrate alternative curatorial philosophies using the same protocol:
-
-- **[`htmltrust-server-reference-python`](../htmltrust-server-reference-python/)** -- planned curated journalism directory. Its repository is a design scaffold.
-- **[`htmltrust-server-reference-rust`](../htmltrust-server-reference-rust/)** -- planned rapid-flag public-safety directory. Its repository is a design scaffold.
-
-The planned implementations target the same OpenAPI contract. Only this Node.js repository currently provides a runnable reference for local testing.
-
-## What It Does
-
-This server implements the **Trust Directory** component of the HTMLTrust system:
-
-- **Author Management** — Create and manage author profiles with cryptographic key pairs
-- **Content Signing** — Sign content hashes with author private keys, producing verifiable signatures
-- **Content Verification** — Verify that content signatures are authentic and untampered
-- **Trust Directory** — Search for public keys, track content occurrences across domains, and manage reputation
-- **Voting & Reputation** — Community-driven trust/distrust system for authors and content
-- **Claims** — Extensible metadata system for content categorization (authorship type, license, AI involvement, etc.)
-
-## Tech Stack
-
-- **Node.js** + **Express 5**
-- **MongoDB** via **Mongoose**
-- **Node.js `crypto`** for key generation, signing, and verification (RSA, ECDSA, Ed25519)
-
-### Tests
+Unit tests use Node's built-in test runner and require no database:
 
 ```sh
-npm test          # unit tests: JCS, claims canonicalization, RFC 9421 verification
-npm run conformance   # full API conformance suite against a disposable MongoDB
+npm test
+npm run openapi:lint
 ```
 
-`npm test` needs no database. `npm run conformance` boots `mongodb-memory-server` and the reference server itself; set `SERVER_PORT` / `MONGO_PORT` if 3000 or 37017 are taken.
-
-For the Docker-based conformance path, use the repository script. It starts a
-MongoDB 7 container bound to loopback, starts this server with Node on the
-host, runs all fixtures, and removes the disposable container when complete:
+Install the conformance runner once, then run the reference server against a disposable in-process MongoDB:
 
 ```sh
-npm ci
-npm run conformance:docker
+npm --prefix conformance/runner ci
+npm run conformance
 ```
 
-Use `SERVER_PORT=3100 MONGO_PORT=37018 npm run conformance:docker` when the
-default ports are occupied. Add `--keep-running` to leave the server and
-MongoDB container running for manual requests.
+The conformance command runs every fixture and the canonical v1 smoke checks. Set `SERVER_PORT` or `MONGO_PORT` when the defaults are occupied. The first run can download a MongoDB binary for `mongodb-memory-server`.
 
-### Environment Variables
+## Test in Docker
 
-See `.env.example` for all options. At minimum you need:
+The repository script runs unit and conformance tests inside a disposable Node 22 container. It mounts the checkout read-only, copies sources into the container, and installs dependencies there. Test output and generated runtime files leave no files in the checkout. Checkout-scoped Docker volumes cache npm packages and the MongoDB test binary.
 
-| Variable | Description |
-|---|---|
-| `MONGO_URI` | MongoDB connection string |
-| `AUTHOR_API_KEY_PEPPER` | Pepper for author API key hashing. Required when `NODE_ENV=production`; the server refuses to start without it |
-| `GENERAL_API_KEY` | Supplementary demo key for submission endpoints |
-| `ADMIN_API_KEY` | Admin key for directory-operator operations (defining claim types, endorsement takedown) |
+```sh
+./scripts/test-in-docker.sh
+```
 
-The CMS integration normally sets `HTMLTRUST_API_URL` to the server origin,
-`HTMLTRUST_AUTHOR_ID` to the registered author, and
-`HTMLTRUST_AUTHOR_API_KEY` to the one-time key returned by `POST /api/authors`.
-The server's compatibility signing endpoint is
-`POST /api/content/sign`; it returns `contentHash`, `claimsHash`, `signature`,
-`keyid`, and `algorithm`. The CMS passes its publication origin in `domain` and
-must preserve the returned algorithm and keyid in the signed section.
+This is the lowest-dependency test path: it requires Docker and a shell. Set `HTMLTRUST_TEST_IMAGE` to use another compatible Node image. The older `npm run conformance:docker` command remains available for developers who want to run the conformance runner with a host Node process and a Docker MongoDB container.
 
-## API Overview
+## Deployment
 
-Full API documentation is in [`openapi.yaml`](openapi.yaml). Key endpoint groups:
+1. Provision MongoDB 7, create a database for this service, and set `MONGO_URI` with credentials appropriate for the deployment.
+2. Install production dependencies from the lockfile:
 
-| Path | Description | Auth |
+   ```sh
+   npm ci --omit=dev
+   ```
+
+3. Set `NODE_ENV=production`, `AUTHOR_API_KEY_PEPPER`, and `DIRECTORY_BASE_URL`. Use a random, long-lived pepper and keep it outside the repository. `DIRECTORY_BASE_URL` must be the public origin clients use to resolve directory key URLs.
+4. Set `GENERAL_API_KEY` and `ADMIN_API_KEY` when compatibility or operator routes need them. Static general and author API-key authentication is disabled in production unless `HTMLTRUST_ALLOW_API_KEY_AUTH=1` is set.
+5. Start the service with `npm start` behind a TLS-terminating reverse proxy. Set `TRUST_PROXY` to the number of trusted proxy hops when the proxy forwards client addresses.
+
+Before upgrading a database created by an earlier server version, run the explicit index migration with the same connection string used by the service:
+
+```sh
+MONGO_URI="mongodb://user:password@db.example/htmltrust" npm run migrate:v1
+```
+
+The migration replaces the legacy content identity and endorsement indexes. Run it during a maintenance window and verify backups before changing production data.
+
+See [.env.example](.env.example) for every supported setting. Remote `did:` and HTTPS key resolution is disabled by default because dereferencing submitter-provided URLs creates an outbound-request risk. Enable `HTMLTRUST_REMOTE_KEY_RESOLUTION=1` only after reviewing the network policy for the deployment.
+
+## API
+
+The server exposes two HTTP surfaces. The root routes are the canonical HTMLTrust v1 directory surface. The `/api` routes are compatibility routes used by the demo UI and existing integrations.
+
+### Canonical v1 routes
+
+| Method and path | Purpose | Authentication |
 |---|---|---|
-| `GET /api/.well-known/htmltrust` | Discover directory capabilities | Public |
-| `GET /api/content/:hash` | Get draft content record by percent-encoded hash | Public |
-| `POST /api/content` | Submit a signed content occurrence | HTTP Message Signature |
-| `GET /api/content/:hash/endorsements` | List structured endorsements for a content hash | Public |
-| `GET /api/keys/:id` | Get draft key document | Public |
-| `GET /api/signers/:id/reputation` | Get draft signer reputation | Public |
-| `POST /api/authors` | Create author + key pair | General API key |
-| `GET /api/authors/:id/public-key` | Get author's public key | Public |
-| `POST /api/content/sign` | Compatibility helper: sign contentHash + claimsHash | Author API key |
-| `POST /api/content/verify` | Verify a signature (deprecated, see below) | Public |
-| `GET /api/directory/keys` | Search public keys | Public |
-| `GET /api/directory/content` | Search signed content | Public |
-| `GET /api/endorsements?content-hash=...` | List endorsements for a content hash | Public |
-| `POST /api/endorsements` | Submit a signed endorsement | HTTP Message Signature |
-| `DELETE /api/endorsements/:id` | Delete an endorsement | Endorser's own key, or admin key |
-| `POST /api/votes` | Vote trust/distrust | HTTP Message Signature |
+| `GET /.well-known/htmltrust` | Discover directory version, capabilities, algorithms, and profiles | Public |
+| `GET /keys/:id` | Retrieve a directory key document | Public |
+| `GET /signers/:id/reputation` | Retrieve signer reputation | Public |
+| `POST /content` | Submit and re-verify a signed content record | RFC 9421 HTTP Message Signature |
+| `GET /content/:hash` | Retrieve a content record by percent-encoded hash | Public |
+| `GET /content/:hash/endorsements` | List endorsements for a content hash | Public |
+| `GET /endorsements?content-hash=...` | List endorsements for a content hash | Public |
+| `POST /endorsements` | Store a signed endorsement | RFC 9421 HTTP Message Signature |
+| `DELETE /endorsements/:id` | Delete an endorsement with the endorser key or directory admin key | Endorser signature or admin key |
 
-### Deprecated endpoints
+Canonical writes require a resolvable key in an RFC 9421 signature. The covered components include `@method`, `@target-uri`, `host`, `date`, and `content-digest` for requests with a body. The `keyid` identifies the key that signed the request.
 
-`POST /api/content/verify` is deprecated. Per [HTMLTrust spec §3.1](https://htmltrust.dev/spec#section-3-1), cryptographic verification is a local operation: clients MUST verify signatures themselves (e.g. via `SubtleCrypto`) using public keys resolved through the directory's key endpoints. A remote yes/no answer from the directory is by definition not a cryptographic guarantee since the directory is not part of the trust root. The endpoint remains as a low-trust convenience for legacy clients, returns the `Deprecation: true` header (RFC 9745), and will be removed in a future major version. The directory's role is to serve public keys, endorsements, and reputation data — not to act as an oracle for signature validity.
+Canonical reads return an HTMLTrust media type by default and accept `application/json`. Responses include `Vary: Accept`; public reads include `Cache-Control` and `ETag`. A matching `If-None-Match` request receives `304 Not Modified`. Canonical JSON submissions accept `application/json` and `application/*+json`; another request media type receives `415`.
 
-### Draft wire-format notes
+### Compatibility routes
 
-Hashes, signatures, and key bytes use canonical unpadded standard Base64, not base64url. JSON fields named `domain` carry the serialized Web origin (`scheme://host[:port]`), not a bare hostname. Content signatures bind `contentHash:claimsHash:domain:signedAt`, where `claimsHash` is the SHA-256 of the draft §4.6 canonical claims serialization over all direct child `meta` claims in the signed section.
+The following routes retain the original `/api` prefix and response shapes:
 
-Endorsement signatures cover the RFC 8785 JCS serialization of the endorsement document with the `signature` member omitted (draft §10.2). The directory verifies that signature against the endorser's resolved key before storing anything, and serves the stored document back byte-for-byte: it injects no `_id`, `createdAt`, or `contentHash` alias, because §10.1 requires unrecognised members to be included in the signed payload, so any injected member would break verification for the next reader. The identifier of a newly stored endorsement is returned in the `Location` header of the 201 response. `contentHash` appears only on documents stored by earlier versions of this server.
-
-Endorsements are append-only. Resubmitting an identical document is idempotent (200 instead of 201); a different document from the same endorser for the same content hash — a revocation, for instance — is stored alongside the original, because §10.3 requires a directory holding both to serve both.
-
-### Authentication
-
-Draft §9.8 requires POST endpoints to authenticate with an [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421) HTTP Message Signature made with a key the directory can resolve per §8. The signature MUST cover the request target, `host`, `date`, and — for requests with a body — `content-digest`:
-
-```
-Signature-Input: sig1=("@method" "@target-uri" "host" "date" "content-digest");\
-  created=1770000000;keyid="https://directory.example/api/keys/k-abc123"
-Signature: sig1=:MEUCIQD...:
-```
-
-The authenticated identity is the resolved key, which is what lets the directory bind a submission, a vote, or an endorsement deletion to a specific signer.
-
-The static API keys below remain as a supplementary demo and operator scheme. A shared secret says nothing about *who* sent a request, so it cannot carry submitter identity; requests authenticated this way vote as a single collapsed identity and cannot delete another party's endorsement. They are refused when `NODE_ENV=production` unless `HTMLTRUST_ALLOW_API_KEY_AUTH=1` is set.
-
-| Header | Purpose |
+| Route group | Operations |
 |---|---|
-| `X-API-KEY` | Demo submission key (creating authors, voting, reporting) |
-| `X-AUTHOR-API-KEY` | Author-specific operations (directory-side signing, updating own profile) |
-| `X-ADMIN-API-KEY` | Directory-operator operations (managing claim types, endorsement takedown) |
+| `/api/authors` | Create and list authors; read, update, or delete an author; read its public key |
+| `/api/content` | Sign, verify, submit, and retrieve content; register occurrences; list content endorsements |
+| `/api/claims` | Create, list, read, update, and delete claim types |
+| `/api/directory` | Search keys and content; read key reputation and occurrences; report keys or content |
+| `/api/endorsements` | List, submit, and delete endorsements |
+| `/api/votes` | Submit votes; list votes; read vote statistics; delete a vote |
+| `/api/keys` and `/api/signers` | Read the compatibility key and signer-reputation documents |
+| `/api/.well-known/htmltrust` | Compatibility alias for the discovery document |
 
-Author API keys are stored as an HMAC-SHA-256 under `AUTHOR_API_KEY_PEPPER` and are shown exactly once, at author creation. Deployments upgrading from a version that stored them in plaintext need the one-time migration described in `src/utils/apiKeys.js`; databases created before endorsements became append-only also need the two unique indexes dropped, as described in `src/models/Endorsement.js`.
+The compatibility routes use the API-key headers described below for their original protected operations. Content and endorsement submission also accept the RFC 9421 flow, while canonical root submissions require that flow. The OpenAPI file defines the long-term v1 resource shapes and media types; this implementation currently keeps author, claim-management, directory-search, reporting, and voting operations under `/api`.
+
+### Deprecated route
+
+`POST /api/content/verify` is deprecated and returns `Deprecation: true` as specified by RFC 9745. Signature verification belongs in the client, using a public key retrieved from the directory and a local cryptographic API such as `SubtleCrypto`. The route remains for legacy clients and will be removed in a future major version. There is no canonical root `/content/verify` route.
+
+### Authentication headers
+
+Use RFC 9421 signatures for canonical writes. The compatibility surface supports these headers when its API-key authentication is enabled:
+
+| Header | Use |
+|---|---|
+| `X-API-KEY` | General compatibility operations, including author creation, occurrence registration, reporting, and demo submissions |
+| `X-AUTHOR-API-KEY` | Author-specific compatibility operations and the compatibility signing helper |
+| `X-ADMIN-API-KEY` | Claim-type administration and endorsement takedown |
+
+Author API keys are returned once by `POST /api/authors`. The server stores an HMAC-SHA-256 digest under `AUTHOR_API_KEY_PEPPER`. A deployment that still has plaintext keys must migrate them using the procedure in [`src/utils/apiKeys.js`](src/utils/apiKeys.js), then remove the plaintext field.
+
+### Wire-format details
+
+- Hashes, signatures, and key bytes use unpadded standard Base64.
+- `domain` values are serialized web origins such as `https://publisher.example:8443`.
+- Content signatures bind `contentHash`, `claimsHash`, `domain`, and `signedAt`. `claimsHash` covers the canonical serialization of direct `meta` claims in the signed section.
+- Endorsement signatures cover the RFC 8785 JCS serialization of the endorsement document with `signature` omitted. New endorsements are served as signed, and the 201 response supplies the stored identifier in `Location`.
+- Endorsements are append-only. An identical retry on canonical `POST /endorsements` returns `201` with the existing resource in `Location`; the `/api/endorsements` compatibility route returns `200`. A different document from the same endorser and content hash is stored as another record.
 
 ### Key custody
 
-`POST /api/authors` accepts an optional `publicKey` (SPKI PEM). Supply it to register a key you already hold: the directory then stores no private key for that author, and content is signed locally and submitted through `POST /api/content`. Omit it and the directory generates and holds the key pair, acting as the convenience registry of draft §9.6.
+`POST /api/authors` accepts an optional SPKI PEM `publicKey`. Supplying one registers a key held by the caller and leaves its private key outside the directory. Omitting it asks the server to generate and hold a key pair for the convenience registry flow. Content signed by a caller-held key is submitted through `POST /content` or the compatibility `POST /api/content` route.
 
-Resolving `did:` and `https:` keyids means dereferencing URLs chosen by whoever submits a record, which is a server-side request forgery primitive. It is therefore off by default; only keys held by this directory resolve. Set `HTMLTRUST_REMOTE_KEY_RESOLUTION=1` to enable it.
+## Project structure
 
-## Project Structure
-
-```
+```text
 src/
-├── server.js              # Express app entry point
-├── config/
-│   └── db.js              # MongoDB connection
-├── controllers/           # Route handlers
-│   ├── authorController.js
-│   ├── claimController.js
-│   ├── contentController.js
-│   ├── directoryController.js
-│   ├── endorsementController.js
-│   └── voteController.js
-├── middleware/
-│   └── auth.js            # API key authentication
-├── models/                # Mongoose schemas
-│   ├── Author.js
-│   ├── Claim.js
-│   ├── ContentOccurrence.js
-│   ├── ContentSignature.js
-│   ├── Endorsement.js
-│   ├── Key.js
-│   └── Vote.js
-├── public/                # Demo web UI
-│   ├── index.html
-│   └── js/main.js
-├── routes/                # Express route definitions
-│   ├── authors.js
-│   ├── claims.js
-│   ├── content.js
-│   ├── directory.js
-│   ├── endorsements.js
-│   └── votes.js
-└── utils/
-    └── crypto.js          # Key generation, signing, verification
+├── server.js                 Express application entry point
+├── config/                   MongoDB connection setup
+├── controllers/              Request handlers
+├── middleware/               Authentication and content negotiation
+├── models/                   Mongoose schemas
+├── public/                   Demo web UI
+├── routes/                   Compatibility route definitions
+└── utils/                    Cryptography and protocol helpers
+conformance/
+├── fixtures/                 YAML API scenarios
+└── runner/                   Implementation-agnostic conformance runner
+scripts/test-in-docker.sh     Docker-only unit and conformance entrypoint
+openapi.yaml                  API contract and response schemas
 ```
 
-## Companion Repositories
+## Related repositories
 
-| Repository | Description |
-|---|---|
-| [htmltrust-spec](https://github.com/HTMLTrust/htmltrust-spec) | The HTMLTrust specification and paper |
-| [htmltrust-browser-reference](https://github.com/HTMLTrust/htmltrust-browser-reference) | Reference browser extension for signature validation |
-| [htmltrust-cms-reference](https://github.com/HTMLTrust/htmltrust-cms-reference) | Reference CMS plugin (WordPress) |
-| [htmltrust-website](https://github.com/HTMLTrust/htmltrust-website) | Project website |
+- [HTMLTrust specification](https://github.com/HTMLTrust/htmltrust-spec)
+- [Browser reference](https://github.com/HTMLTrust/htmltrust-browser-reference)
+- [CMS reference](https://github.com/HTMLTrust/htmltrust-cms-reference)
+- [Project website](https://github.com/HTMLTrust/htmltrust-website)
 
-## License
+## License and contributions
 
+This project is licensed under the [PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/). Commercial use requires a separate agreement with the licensor.
 
-This project is licensed under the [PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0). You may use, modify, and share the software for any noncommercial purpose with attribution. Commercial use requires a separate agreement with the licensor.
-
-## Origin & Contributions
-
-HTMLTrust is an idea I (Jason Grey) have been chewing on since 2024. I'm not an academic — I'm an engineer with a day job and a family — so the spec, the reference implementations, and most of this prose have been written with significant help from AI tools acting as research assistant, technical writer, and pair programmer. I wrote the original architectural sketches and reviewed every line; the assistants filled in the gaps and saved me from re-typing the same explanation for the hundredth time.
-
-**Contributions are welcome — human or AI-assisted, doesn't matter to me.** What matters is whether the code, the spec text, or the conformance vectors move the project forward. Open a PR.
-
-What this project is **not** a forum for:
-
-- Debates about whether AI should be used to write code or specifications.
-- Opinions on who is or isn't trustworthy on the web.
-- Politics, religion, professional practice, or personal philosophy.
-
-HTMLTrust is a mechanism — a way for *anyone* to sign content they publish and for *anyone* to decide whom they trust, on their own terms. The project takes no position on what the right answers are; it just provides the tools. If you want to debate the answers, there are entire continents of the internet better suited to it.
-
-If this work is useful to you and you'd like to support it, see [GitHub Sponsors](https://github.com/sponsors/jt55401) or the other channels in [`.github/FUNDING.yml`](.github/FUNDING.yml).
+Issues and pull requests are welcome. Contributions may include code, specification text, documentation, or conformance fixtures. Please keep changes focused on improving the protocol and its implementations.
