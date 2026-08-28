@@ -45,6 +45,12 @@ const KeySchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  revokedAt: Date,
+  supersededBy: String,
+  previousKeys: {
+    type: [String],
+    default: undefined
+  },
   trustScore: {
     type: Number,
     min: 0,

@@ -47,8 +47,12 @@ test("JCS escapes strings exactly like JSON.stringify", () => {
   assert.equal(canonicalizeJcs({ s: value }), `{"s":${JSON.stringify(value)}}`);
   assert.equal(canonicalizeJcs(""), '"\\u000f"');
   assert.equal(canonicalizeJcs("\n"), '"\\n"');
-  // ES2019 well-formed stringify: a lone surrogate is escaped, not emitted raw.
-  assert.equal(canonicalizeJcs("\ud800"), '"\\ud800"');
+});
+
+test("JCS rejects lone UTF-16 surrogates", () => {
+  assert.throws(() => canonicalizeJcs("\ud800"), /surrogate/);
+  assert.throws(() => canonicalizeJcs("\udfff"), /surrogate/);
+  assert.throws(() => canonicalizeJcs({ "\ud800": 1 }), /surrogate/);
 });
 
 test("JCS emits no insignificant whitespace and preserves array order", () => {
@@ -61,17 +65,10 @@ test("JCS is idempotent through a JSON round trip", () => {
   assert.equal(canonicalizeJcs(JSON.parse(once)), once);
 });
 
-test("JCS never emits the token `undefined`", () => {
-  // The hand-rolled canonicalizer this replaces serialized an undefined
-  // member as the bare token `undefined`, producing bytes no other
-  // implementation could reproduce (and that are not JSON at all).
-  const got = canonicalizeJcs({ a: 1, b: undefined });
-  assert.equal(got, '{"a":1}');
-  assert.ok(!got.includes("undefined"));
-});
-
 test("JCS rejects values with no JSON representation", () => {
   assert.throws(() => canonicalizeJcs({ a: Infinity }));
   assert.throws(() => canonicalizeJcs({ a: NaN }));
   assert.throws(() => canonicalizeJcs({ a: 1n }));
+  assert.throws(() => canonicalizeJcs({ a: undefined }));
+  assert.throws(() => canonicalizeJcs([undefined]));
 });

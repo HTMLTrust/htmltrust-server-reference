@@ -6,33 +6,43 @@ const ContentSignatureSchema = new mongoose.Schema({
     required: [true, 'Content hash is required'],
     index: true
   },
-  // Canonical hash of the claims map (sorted "name:content\n" records, then
-  // hashed). Part of the signature binding per spec §2.1.
+  // Canonical hash of the complete direct-child claims array.
   claimsHash: {
     type: String,
     default: ''
   },
-  // ISO-8601 timestamp from the <meta name="signed-at"> element in the
-  // signed-section. Part of the signature binding per spec §2.1.
+  // Exact v1 timestamp from the signed-at claim.
   signedAt: {
     type: String,
     default: ''
   },
   domain: {
     type: String,
-    required: [true, 'Domain is required'],
     index: true
   },
+  profile: {
+    type: String,
+    index: true
+  },
+  algorithm: String,
+  keyid: {
+    type: String,
+    index: true
+  },
+  scope: String,
+  location: {
+    type: String,
+    index: true
+  },
+  sourceURL: String,
   authorId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Author',
-    required: true,
     index: true
   },
   keyId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Key',
-    required: true
+    ref: 'Key'
   },
   signature: {
     type: String,
@@ -53,8 +63,31 @@ const ContentSignatureSchema = new mongoose.Schema({
   }
 });
 
-// Compound index for faster lookups
-ContentSignatureSchema.index({ contentHash: 1, domain: 1, authorId: 1 }, { unique: true });
+// Pre-v1 rows and v1 rows have different identities. A v1 signature may be
+// indexed at more than one signed URL, including when its key is remote and
+// has no local Author row.
+ContentSignatureSchema.index(
+  { contentHash: 1, domain: 1, authorId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      domain: { $type: 'string' },
+      authorId: { $type: 'objectId' },
+      // MongoDB partial indexes support `$in`, while `$exists: false` is not
+      // a supported partial-index predicate. `null` matches the missing
+      // profile field on pre-v1 documents and keeps v1 rows out of this
+      // legacy identity index.
+      profile: { $in: [null] }
+    }
+  }
+);
+ContentSignatureSchema.index(
+  { contentHash: 1, profile: 1, location: 1, keyid: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { profile: 'htmltrust-signature-v1' }
+  }
+);
 
 // Virtual for content occurrences
 ContentSignatureSchema.virtual('contentOccurrences', {

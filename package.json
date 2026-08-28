@@ -9,7 +9,9 @@
     "test": "node --test \"test/**/*.test.js\"",
     "conformance": "node conformance/runner/with-reference-server.mjs",
     "conformance:docker": "bash conformance/run-conformance.sh",
-    "conformance:runner": "node conformance/runner/run.mjs"
+    "conformance:runner": "node conformance/runner/run.mjs",
+    "openapi:lint": "redocly lint openapi.yaml --skip-rule no-unused-components",
+    "migrate:v1": "node scripts/migrate-v1-indexes.js"
   },
   "keywords": [
     "htmltrust",
@@ -20,7 +22,7 @@
   "author": "Jason Grey <jason@jason-grey.com>",
   "license": "LicenseRef-PolyForm-Noncommercial-1.0.0",
   "dependencies": {
-    "@htmltrust/canonicalization": "https://github.com/HTMLTrust/htmltrust-canonicalization/archive/refs/tags/v0.2.2.tar.gz",
+    "@htmltrust/canonicalization": "https://github.com/HTMLTrust/htmltrust-canonicalization/archive/37359dd8a872f8d09fa0e7f7dd75567d92e5bec4.tar.gz",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
@@ -30,6 +32,7 @@
     "mongoose": "^8.14.1"
   },
   "devDependencies": {
+    "@redocly/cli": "2.49.0",
     "mongodb-memory-server": "^11.1.0",
     "nodemon": "^3.1.10"
   }

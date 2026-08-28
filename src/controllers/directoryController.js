@@ -9,6 +9,8 @@ const {
   problem,
   safeSearchRegex,
 } = require('../utils/htmltrustProtocol');
+const { directoryBaseUrl, directoryKeyUrl } = require('../utils/directoryUrl');
+const { negotiatedType } = require('../middleware/contentNegotiation');
 
 /**
  * Clamp caller-supplied pagination. An unbounded `limit` turns a public read
@@ -26,7 +28,7 @@ const boundedPage = (value) => {
   return parsed;
 };
 
-const baseDirectoryUrl = (req) => `${req.protocol}://${req.get('host')}/api/`;
+const baseDirectoryUrl = (req) => `${directoryBaseUrl(req)}/`;
 
 const keyIdFromSignerId = (id) => {
   if (!id || typeof id !== 'string') return null;
@@ -44,7 +46,7 @@ const keyIdFromSignerId = (id) => {
 
 exports.discovery = async (req, res) => {
   res
-    .type('application/htmltrust-directory+json')
+    .type(negotiatedType(req, 'application/htmltrust-directory+json'))
     .status(200)
     .json({
       directory: baseDirectoryUrl(req),
@@ -56,30 +58,50 @@ exports.discovery = async (req, res) => {
         reputation: true
       },
       supportedAlgorithms: {
-        signature: ['ed25519', 'rsa-pkcs1-sha256', 'ecdsa-p256'],
-        hash: ['sha256']
-      }
+        signature: [
+          'ed25519',
+          'ecdsa-p256',
+          'ecdsa-p384',
+          'rsa-pss-sha256',
+          'rsa-pkcs1-sha256'
+        ],
+        hash: ['sha256', 'sha384', 'sha512']
+      },
+      supportedProfiles: ['htmltrust-signature-v1']
     });
 };
 
 exports.getKeyDocument = async (req, res) => {
+  if (!/^[0-9a-fA-F]{24}$/.test(req.params.id)) {
+    return problem(res, 400, 'Invalid key id', 'The key id must be a 24-character hexadecimal identifier');
+  }
+
   try {
     const key = await Key.findById(req.params.id);
     if (!key) {
       return problem(res, 404, 'Key not found', 'No key document exists for the requested id');
     }
     res
-      .type('application/htmltrust-key+json')
+      .type(negotiatedType(req, 'application/htmltrust-key+json'))
       .status(200)
-      .json(keyDocumentFor(key));
+      .json(keyDocumentFor(key, directoryKeyUrl(req, key._id)));
   } catch (error) {
-    return problem(res, 400, 'Invalid key id', detailFor(error));
+    console.error('Get key document error:', error);
+    return problem(res, 500, 'Directory read failure', 'The directory could not read the key document', {
+      type: 'https://htmltrust.org/errors/storage-failure',
+    });
   }
 };
 
 exports.getSignerReputation = async (req, res) => {
+  let signerId;
   try {
-    const signerId = decodeURIComponent(req.params.id);
+    signerId = decodeURIComponent(req.params.id);
+  } catch (error) {
+    return problem(res, 400, 'Invalid signer id', 'The signer id is not valid percent-encoding');
+  }
+
+  try {
     const keyId = keyIdFromSignerId(signerId);
     let key = null;
     if (keyId) {
@@ -102,7 +124,10 @@ exports.getSignerReputation = async (req, res) => {
       methodology: `${baseDirectoryUrl(req)}methodology/reputation-v1`
     });
   } catch (error) {
-    return problem(res, 400, 'Invalid signer id', detailFor(error));
+    console.error('Get signer reputation error:', error);
+    return problem(res, 500, 'Directory read failure', 'The directory could not read signer reputation', {
+      type: 'https://htmltrust.org/errors/storage-failure',
+    });
   }
 };
 

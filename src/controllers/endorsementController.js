@@ -14,9 +14,10 @@ const {
 const { canonicalizeJcs } = require('../utils/jcs');
 const { resolveUsableKey, sameKeyMaterial } = require('../utils/keyResolution');
 const { hasAdminApiKey } = require('../middleware/auth');
+const { negotiatedType } = require('../middleware/contentNegotiation');
 
 /**
- * Return the stored endorsement document exactly as it was submitted.
+ * Return the stored endorsement with every submitted member intact.
  *
  * Draft §9.5: "The directory MUST NOT alter the endorsement payloads in a
  * manner that invalidates the endorser's signature", and §10.1 requires
@@ -54,16 +55,15 @@ const toEndorsementDocument = (endorsement) => {
  * canonicalized, verified, and stored, so nothing may be injected into it:
  * every added member changes the signing payload.
  */
-const validateEndorsementDocument = (body) => {
+const validateEndorsementDocument = (body, { stripLegacyRawBlob = false } = {}) => {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
     throw invalid('The endorsement document must be a JSON object');
   }
   const document = { ...body };
 
-  // `rawBlob` is a legacy compatibility field that was never part of the
-  // signed document; strip it before verification so old clients that still
-  // send it do not fail, and keep it out of storage.
-  delete document.rawBlob;
+  // `rawBlob` is a pre-v1 compatibility field that was never signed. The
+  // canonical root endpoint preserves it like every other extension member.
+  if (stripLegacyRawBlob) delete document.rawBlob;
 
   for (const field of ['endorser', 'endorsement', 'signature', 'timestamp']) {
     if (typeof document[field] !== 'string' || document[field].length === 0) {
@@ -104,7 +104,7 @@ const documentHashFor = (document) =>
  * @returns {Promise<{ok: true} | {ok: false, status: number, title: string, detail: string, type?: string}>}
  */
 const verifyEndorsementSignature = async (document, req) => {
-  const resolution = await resolveUsableKey(document.endorser, { req });
+  const resolution = await resolveUsableKey(document.endorser, { req, algorithm: document.algorithm });
   if (!resolution.ok) {
     return {
       ok: false,
@@ -161,15 +161,19 @@ const verifyEndorsementSignature = async (document, req) => {
 exports.createEndorsement = async (req, res) => {
   let document;
   try {
-    document = validateEndorsementDocument(req.body);
+    document = validateEndorsementDocument(req.body, {
+      stripLegacyRawBlob: req.baseUrl === '/api/endorsements',
+    });
   } catch (error) {
     return problem(res, 400, 'Invalid endorsement', detailFor(error, 'The endorsement document is not valid'), {
       type: 'https://htmltrust.org/errors/endorsement-invalid',
     });
   }
 
+  let verification;
+  let documentHash;
   try {
-    const verification = await verifyEndorsementSignature(document, req);
+    verification = await verifyEndorsementSignature(document, req);
     if (!verification.ok) {
       return problem(res, verification.status, verification.title, verification.detail, {
         type: verification.type,
@@ -177,8 +181,14 @@ exports.createEndorsement = async (req, res) => {
       });
     }
 
-    const documentHash = documentHashFor(document);
+    documentHash = documentHashFor(document);
+  } catch (error) {
+    return problem(res, 400, 'Invalid endorsement', detailFor(error, 'The endorsement could not be verified'), {
+      type: 'https://htmltrust.org/errors/endorsement-invalid',
+    });
+  }
 
+  try {
     // Append-only with idempotent resubmission. A second, different document
     // from the same endorser for the same content hash (a revocation, an
     // updated claim) is stored alongside the first: draft §10.3 requires a
@@ -202,15 +212,16 @@ exports.createEndorsement = async (req, res) => {
       created = true;
     }
 
+    const status = req.baseUrl === '/api/endorsements' && !created ? 200 : 201;
     return res
-      .status(created ? 201 : 200)
-      .location(`/api/endorsements/${stored._id}`)
-      .type('application/htmltrust-endorsement+json')
+      .status(status)
+      .location(`/endorsements/${stored._id}`)
+      .type(negotiatedType(req, 'application/htmltrust-endorsement+json'))
       .json(toEndorsementDocument(stored));
   } catch (error) {
     console.error('Create endorsement error:', error);
-    return problem(res, 400, 'Invalid endorsement', detailFor(error, 'The endorsement could not be stored'), {
-      type: 'https://htmltrust.org/errors/endorsement-invalid',
+    return problem(res, 500, 'Directory storage failure', 'The directory could not store the endorsement', {
+      type: 'https://htmltrust.org/errors/storage-failure',
     });
   }
 };
@@ -221,30 +232,39 @@ exports.createEndorsement = async (req, res) => {
  * @access  Public
  */
 exports.listEndorsements = async (req, res) => {
+  // Accept both kebab-case (spec-style) and camelCase query parameters.
+  const contentHash = req.query['content-hash'] || req.query.contentHash || req.query.endorsement;
+
+  if (!contentHash) {
+    return problem(res, 400, 'Invalid request', 'content-hash query parameter is required');
+  }
+
+  let endorsementHash;
   try {
-    // Accept both kebab-case (spec-style) and camelCase query parameters.
-    const contentHash = req.query['content-hash'] || req.query.contentHash || req.query.endorsement;
+    endorsementHash = assertContentHash(String(contentHash), 'content-hash');
+  } catch (error) {
+    return problem(res, 400, 'Invalid content hash', detailFor(error, 'The content-hash parameter is not valid'));
+  }
 
-    if (!contentHash) {
-      return problem(res, 400, 'Invalid request', 'content-hash query parameter is required');
-    }
-
-    const endorsementHash = assertContentHash(String(contentHash), 'content-hash');
+  try {
     const endorsements = await Endorsement.find({
       $or: [{ endorsement: endorsementHash }, { contentHash: endorsementHash }]
     }).sort({ createdAt: -1 });
 
     return res
-      .type('application/htmltrust-endorsement+json')
+      .type(negotiatedType(req, 'application/htmltrust-endorsement+json'))
       .status(200)
       .json(endorsements.map(toEndorsementDocument));
   } catch (error) {
     console.error('List endorsements error:', error);
-    return problem(res, 400, 'Invalid content hash', detailFor(error, 'The content-hash parameter is not valid'));
+    return problem(res, 500, 'Directory read failure', 'The directory could not read endorsements', {
+      type: 'https://htmltrust.org/errors/storage-failure',
+    });
   }
 };
 
 exports.toEndorsementDocument = toEndorsementDocument;
+exports.validateEndorsementDocument = validateEndorsementDocument;
 
 /**
  * @desc    Delete an endorsement
@@ -262,6 +282,10 @@ exports.toEndorsementDocument = toEndorsementDocument;
  * able to delete anyone's endorsements is a censorship primitive.
  */
 exports.deleteEndorsement = async (req, res) => {
+  if (!/^[0-9a-fA-F]{24}$/.test(req.params.id)) {
+    return problem(res, 400, 'Invalid endorsement id', 'The endorsement id must be a 24-character hexadecimal identifier');
+  }
+
   try {
     const endorsement = await Endorsement.findById(req.params.id);
 
@@ -282,7 +306,10 @@ exports.deleteEndorsement = async (req, res) => {
         );
       }
 
-      const endorserKey = await resolveUsableKey(endorsement.endorser, { req });
+      const endorserKey = await resolveUsableKey(endorsement.endorser, {
+        req,
+        algorithm: endorsement.algorithm,
+      });
       const sameKeyid = actor.keyid === endorsement.endorser;
       const sameMaterial =
         endorserKey.ok && sameKeyMaterial(actor.resolved.publicKeyPem, endorserKey.resolved.publicKeyPem);
@@ -298,6 +325,8 @@ exports.deleteEndorsement = async (req, res) => {
     return res.status(204).send();
   } catch (error) {
     console.error('Delete endorsement error:', error);
-    return problem(res, 400, 'Invalid request', detailFor(error, 'The endorsement could not be deleted'));
+    return problem(res, 500, 'Directory storage failure', 'The directory could not delete the endorsement', {
+      type: 'https://htmltrust.org/errors/storage-failure',
+    });
   }
 };

@@ -157,22 +157,24 @@ const assertRfc3339Utc = (value, field = "timestamp") => {
   return value;
 };
 
-const keyDocumentFor = (key) => {
+const keyDocumentFor = (key, kid) => {
   const publicKeyObject = crypto.createPublicKey(key.publicKey);
   const der = publicKeyObject.export({ type: "spki", format: "der" });
   const doc = {
-    kid: String(key._id),
+    kid: kid || String(key._id),
     algorithm: normalizeAlgorithm(key.algorithm),
     publicKey: toCanonicalBase64(der),
     publicKeyEncoding: "spki-der",
-    // Draft §8.2: a verifier MUST treat `revoked: true` as a key-revoked
-    // failure, so this has to report the stored state rather than a constant.
     revoked: Boolean(key.revoked),
   };
   if (key.expiresAt) {
     doc.expires = key.expiresAt.toISOString();
   }
-  doc.publicKeyPem = key.publicKey;
+  if (key.revokedAt) doc.revokedAt = key.revokedAt.toISOString();
+  if (key.supersededBy) doc.supersededBy = key.supersededBy;
+  if (Array.isArray(key.previousKeys) && key.previousKeys.length > 0) {
+    doc.previousKeys = key.previousKeys;
+  }
   return doc;
 };
 

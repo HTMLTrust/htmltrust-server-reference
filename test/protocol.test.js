@@ -5,6 +5,7 @@ const {
   safeSearchRegex,
 } = require("../src/utils/htmltrustProtocol");
 const { canonicalizeClaims } = require("../src/utils/claims");
+const { validateEndorsementDocument } = require("../src/controllers/endorsementController");
 
 test("safeSearchRegex turns caller input into a literal", () => {
   // Every one of these is regular-expression syntax that used to reach the
@@ -56,6 +57,22 @@ test("the endorsement payload omits only the signature", () => {
   );
 });
 
+test("canonical endorsement validation preserves every extension member", () => {
+  const document = {
+    endorser: "did:web:reviewer.example",
+    endorsement: `sha256:${Buffer.alloc(32).toString("base64").replace(/=+$/, "")}`,
+    algorithm: "ed25519",
+    timestamp: "2026-05-10T09:00:00Z",
+    signature: Buffer.alloc(64).toString("base64").replace(/=+$/, ""),
+    rawBlob: { extension: true },
+  };
+  assert.deepEqual(validateEndorsementDocument(document).rawBlob, { extension: true });
+  assert.equal(
+    Object.hasOwn(validateEndorsementDocument(document, { stripLegacyRawBlob: true }), "rawBlob"),
+    false,
+  );
+});
+
 test("claims canonicalization sorts by name in UTF-8 byte order", async () => {
   // "z" (U+007A) sorts before the astral character in UTF-8 byte order, and
   // the whole-line sort the previous implementation used would have ordered
@@ -65,7 +82,7 @@ test("claims canonicalization sorts by name in UTF-8 byte order", async () => {
     a: "zzz",
     "signed-at": "2026-05-12T12:00:00Z",
   });
-  assert.equal(canonical, "a:zzz\nsigned-at:2026-05-12T12:00:00Z\nz:aaa\n");
+  assert.equal(canonical, "a:zzz\nsigned-at:2026-05-12T12\\:00\\:00Z\nz:aaa\n");
 });
 
 test("claims canonicalization normalizes claim text", async () => {
@@ -73,6 +90,11 @@ test("claims canonicalization normalizes claim text", async () => {
   // directory computes a different claims hash than the signer did.
   const canonical = await canonicalizeClaims({ "  License  ": "CC-BY   4.0" });
   assert.equal(canonical, "License:CC-BY 4.0\n");
+});
+
+test("claims canonicalization removes boundary whitespace from names and values", async () => {
+  const canonical = await canonicalizeClaims([{ name: " author ", content: " Ada Lovelace " }]);
+  assert.equal(canonical, "author:Ada Lovelace\n");
 });
 
 test("claims canonicalization rejects duplicate normalized names", async () => {

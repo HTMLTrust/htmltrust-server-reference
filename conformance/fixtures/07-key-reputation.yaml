@@ -61,7 +61,7 @@ steps:
     expect:
       status: 200
       body:
-        kid: $keyId
+        kid: "$rootUrl/keys/$keyId"
         algorithm: "ed25519"
         publicKey: $nonempty-string
 

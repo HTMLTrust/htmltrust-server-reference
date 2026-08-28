@@ -30,25 +30,8 @@ jobs:
         with:
           node-version: "22"
 
-      # The package token used to be written to ~/.gitconfig, where every later
-      # step -- including any dependency lifecycle script -- could read it back.
-      # It is now passed through GIT_CONFIG_* environment variables, which git
-      # honours for this process tree only and never persists to disk, and
-      # --ignore-scripts keeps third-party install hooks from running at all
-      # while the token is in the environment.
-      #
-      # HTMLTRUST_PKG_TOKEN must be a fine-grained PAT scoped to the
-      # HTMLTrust/htmltrust-canonicalization repository with Contents: Read and
-      # nothing else. A classic `repo`-scoped token grants write access to every
-      # repo the owner can reach and must not be used here.
       - name: Install dependencies
-        env:
-          GIT_CONFIG_COUNT: "2"
-          GIT_CONFIG_KEY_0: url.https://x-access-token:${{ secrets.HTMLTRUST_PKG_TOKEN }}@github.com/.insteadOf
-          GIT_CONFIG_VALUE_0: https://github.com/
-          GIT_CONFIG_KEY_1: url.https://x-access-token:${{ secrets.HTMLTRUST_PKG_TOKEN }}@github.com/.insteadOf
-          GIT_CONFIG_VALUE_1: ssh://git@github.com/
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Run unit tests
         run: npm test
@@ -79,7 +62,7 @@ jobs:
           npm run conformance
 
       - name: Validate OpenAPI spec
-        run: npx @redocly/cli lint openapi.yaml --skip-rule no-unused-components || true
+        run: npm run openapi:lint
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

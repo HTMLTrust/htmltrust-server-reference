@@ -12,6 +12,6 @@ const directoryBaseUrl = (req, env = process.env) => {
 };
 
 const directoryKeyUrl = (req, keyId, env = process.env) =>
-  `${directoryBaseUrl(req, env)}/api/keys/${encodeURIComponent(String(keyId))}`;
+  `${directoryBaseUrl(req, env)}/keys/${encodeURIComponent(String(keyId))}`;
 
 module.exports = { directoryBaseUrl, directoryKeyUrl };
