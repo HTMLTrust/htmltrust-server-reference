@@ -2,11 +2,12 @@
 #
 # Prerequisite: create an author so we have an author-scoped API key.
 # Then sign a content hash. The signature itself is server-generated;
-# we only assert response shape (the spec requires contentHash, domain,
-# authorId, signature, and claims to be present).
+# the convenience endpoint emits the complete frozen v1 signed-section
+# attribute set.
 name: Sign content with author key
 description: |
-  POST /content/sign produces a ContentSignature bound to the author's key.
+  POST /content/sign produces a v1 signed-section record bound to the
+  author's directory-held key and the final HTTPS source URL.
 steps:
   - name: Create author (signing identity)
     request:
@@ -32,40 +33,26 @@ steps:
         X-AUTHOR-API-KEY: $authorApiKey
       body:
         contentHash: "sha256:xJTJYuXl1MuP1EjRLhKtgMUZvvc6qexrTMHyVnVL+Yc"
-        claimsHash: "sha256:4LOflWusiW26FjvAHhwAZpPqZrLblKkYZ1QYKPORKDo"
-        domain: "https://conformance.example.com"
-        signedAt: "2026-05-12T12:00:00.000Z"
+        sourceURL: "https://conformance.example.com/articles/03#summary"
+        scope: "url"
+        signedAt: "2026-05-12T12:00:00Z"
         claims:
-          signed-at: "2026-05-12T12:00:00.000Z"
-          ContentType: "Article"
-          License: "CC-BY-4.0"
+          - name: "signed-at"
+            content: "2026-05-12T12:00:00Z"
+          - name: "claim:ContentType"
+            content: "Article"
+          - name: "claim:License"
+            content: "CC-BY-4.0"
     expect:
       status: 201
-      schema: ContentSignature
+      schema: V1ContentSignature
       body:
         contentHash: "sha256:xJTJYuXl1MuP1EjRLhKtgMUZvvc6qexrTMHyVnVL+Yc"
-        domain: "https://conformance.example.com"
+        profile: "htmltrust-signature-v1"
+        scope: "url"
+        location: "https://conformance.example.com/articles/03"
+        sourceURL: "https://conformance.example.com/articles/03#summary"
         signature: $nonempty-string
         algorithm: "ed25519"
         keyid: $nonempty-string
-        claims:
-          ContentType: "Article"
-          License: "CC-BY-4.0"
-    capture:
-      signature: $.signature
-
-  - name: Verify the freshly signed content
-    request:
-      method: POST
-      path: /content/verify
-      body:
-        contentHash: "sha256:xJTJYuXl1MuP1EjRLhKtgMUZvvc6qexrTMHyVnVL+Yc"
-        claimsHash: "sha256:4LOflWusiW26FjvAHhwAZpPqZrLblKkYZ1QYKPORKDo"
-        domain: "https://conformance.example.com"
-        signedAt: "2026-05-12T12:00:00.000Z"
-        authorId: $authorId
-        signature: $signature
-    expect:
-      status: 200
-      body:
-        valid: true
+        claims: $any

@@ -15,11 +15,15 @@ const {
   normalizeAlgorithm,
   normalizeSerializedOrigin,
   problem,
-  signedAtFromClaims,
 } = require('../utils/htmltrustProtocol');
 const { canonicalizeClaims } = require('../utils/claims');
 const { directoryKeyUrl } = require('../utils/directoryUrl');
-const { validateV1ContentSubmission } = require('../utils/signingProfile');
+const {
+  buildV1ContentSigningPayload,
+  deriveLocation,
+  PROFILE,
+  validateV1ContentSubmission,
+} = require('../utils/signingProfile');
 const { negotiatedType } = require('../middleware/contentNegotiation');
 
 /**
@@ -44,6 +48,27 @@ const buildBinding = ({ contentHash, claimsHash, domain, signedAt }) => {
 
 const claimsObject = (claims) => Object.fromEntries(
   normalizeClaims(claims).map((claim) => [claim.name, claim.content])
+);
+
+const contentSignatureConflict = (message) => {
+  const error = invalid(message);
+  error.statusCode = 409;
+  error.problemType = 'https://htmltrust.org/errors/content-signature-conflict';
+  return error;
+};
+
+const isDuplicateKeyError = (error) => error?.code === 11000 || error?.codeName === 'DuplicateKey';
+
+// A v1 ContentSignature row is an immutable signed artifact. Its identity is
+// content + profile + derived location + keyid, while sourceURL is occurrence
+// metadata and may differ for an origin-scoped signature.
+const matchesV1Artifact = (record, prepared, signature) => (
+  record.profile === PROFILE.signature &&
+  record.algorithm === prepared.algorithm &&
+  record.claimsHash === prepared.claimsHash &&
+  record.signedAt === prepared.signedAt &&
+  record.scope === prepared.scope &&
+  record.signature === signature
 );
 
 /**
@@ -149,51 +174,62 @@ const contentRecord = async (req, contentHash, { v1Only = false } = {}) => {
 };
 
 /**
- * @desc    Sign content
+ * @desc    Sign content with the directory-held v1 convenience key
  * @route   POST /api/content/sign
  * @access  Private (Author API Key)
  *
  * Request body:
  *   - contentHash: string, already-hashed canonical content (e.g. "sha256:...")
- *   - claimsHash:  string, already-hashed canonical claims serialization
- *   - domain:      string, publication origin
- *   - signedAt:    string, ISO-8601 timestamp
- *   - claims:      object, full claims map (stored for serving back to verifiers)
+ *   - sourceURL:   string, final HTTPS response URL
+ *   - scope:       string, either "url" or "origin"
+ *   - signedAt:    string, exact v1 UTC timestamp
+ *   - claims:      array of {name, content} records, including signed-at
+ *
+ * The directory derives every other signing field from the authenticated
+ * author and the submitted source URL.  This route intentionally has no
+ * legacy colon-binding or caller-supplied claims-hash compatibility path.
  */
 exports.signContent = async (req, res) => {
   try {
-    const { claims } = req.body;
-    const {
-      contentHash,
-      claimsHash,
-      domain,
-      signedAt,
-    } = validateSignatureInputs(req.body);
     const author = req.author;
-    const claimSignedAt = signedAtFromClaims(claims);
-    if (claimSignedAt && claimSignedAt !== signedAt) {
-      throw invalid('signedAt must match the direct child signed-at claim');
+    if (!author || !author._id) {
+      return problem(res, 401, 'Unauthorized', 'An authenticated author is required to sign content', {
+        type: 'https://htmltrust.org/errors/unauthorized',
+      });
     }
 
-    // Recompute the claims hash from the claims map rather than signing the
-    // caller's value. The binding (§5) is what the signature attests to; if
-    // the directory signs a claimsHash it never derived, the caller chooses
-    // what the key attests to and the stored claims are free to say something
-    // else entirely.
-    const recomputedClaimsHash = await canonicalClaimsHash(claims, contentHash.split(':')[0]);
-    if (recomputedClaimsHash !== claimsHash) {
-      throw invalid(
-        `claimsHash does not match the canonical claims serialization (computed ${recomputedClaimsHash})`
-      );
+    const body = req.body || {};
+    // These fields belonged to the removed colon-binding endpoint. Rejecting
+    // them catches stale clients instead of silently signing a different
+    // interpretation of their request.
+    for (const field of ['domain', 'authorId', 'claimsHash']) {
+      if (Object.hasOwn(body, field)) {
+        throw invalid(`${field} is not accepted by the v1 signing endpoint`);
+      }
     }
 
-    // Get author's private key
-    const key = await Key.findOne({ authorId: author._id }).select('+privateKey');
+    // The authenticated author selects the key and all key/profile fields.
+    // A client may echo them for diagnostics, but cannot choose a different
+    // key or algorithm for the directory-held private key.
+    const keyQuery = Key.findOne({
+      authorId: author._id,
+      revoked: { $ne: true },
+      $or: [
+        { expiresAt: { $exists: false } },
+        { expiresAt: null },
+        { expiresAt: { $gt: new Date() } },
+      ],
+    });
+    // Rotation creates a new key while the old key remains resolvable for
+    // historical signatures. The newest usable key is the current convenience
+    // signing key under the existing Key schema, with _id as a stable tie
+    // breaker for equal timestamps.
+    const key = await keyQuery.sort({ createdAt: -1, _id: -1 }).select('+privateKey');
 
     if (!key) {
-      return res.status(404).json({
-        code: 'NOT_FOUND',
-        message: 'Key not found for this author'
+      return problem(res, 404, 'Signing key not found', 'No active directory-held signing key exists for this author', {
+        type: 'https://htmltrust.org/errors/signing-key-not-found',
+        authorId: String(author._id),
       });
     }
 
@@ -208,59 +244,120 @@ exports.signContent = async (req, res) => {
       );
     }
 
-    // Build canonical binding per spec §2.1
-    const dataToSign = buildBinding({ contentHash, claimsHash, domain, signedAt });
-
-    // Sign the binding string
-    const signature = signContent(dataToSign, key.privateKey, key.algorithm);
-
-    // Check if a signature already exists for this content, domain, and author
-    let contentSignature = await ContentSignature.findOne({
-      contentHash,
-      domain,
-      authorId: author._id
-    });
-
-    if (contentSignature) {
-      // Update existing signature
-      contentSignature.signature = signature;
-      contentSignature.claims = claimsObject(claims);
-      contentSignature.claimsHash = claimsHash;
-      contentSignature.signedAt = signedAt;
-      contentSignature.occurrences += 1;
-      await contentSignature.save();
-    } else {
-      // Create new signature
-      contentSignature = await ContentSignature.create({
-        contentHash,
-        claimsHash,
-        signedAt,
-        domain,
-        authorId: author._id,
-        keyId: key._id,
-        signature,
-        claims: claimsObject(claims)
-      });
+    const keyid = keyidFor(req, key);
+    const algorithm = normalizeAlgorithm(key.algorithm);
+    const location = deriveLocation(body.sourceURL, body.scope);
+    const expectedFields = {
+      profile: PROFILE.signature,
+      context: PROFILE.context,
+      canonicalizationProfile: PROFILE.canonicalization,
+      attributeProfile: PROFILE.attributes,
+      urlProfile: PROFILE.url,
+      keyid,
+      algorithm,
+      location,
+    };
+    for (const [field, expected] of Object.entries(expectedFields)) {
+      if (Object.hasOwn(body, field) && body[field] !== expected) {
+        throw invalid(`${field} must equal the directory-selected v1 value`);
+      }
     }
 
-    // Return the signature
+    const prepared = await buildV1ContentSigningPayload({
+      ...body,
+      profile: PROFILE.signature,
+      keyid,
+      algorithm,
+      location,
+    });
+    const signature = signContent(prepared.payload, key.privateKey, algorithm);
+    const sourceOrigin = new URL(prepared.sourceURL).origin;
+
+    // v1 identity is content + derived location + exact key identifier. A
+    // signature can occur at more than one URL when its scope is origin.
+    const identity = {
+      contentHash: prepared.contentHash,
+      profile: PROFILE.signature,
+      location: prepared.location,
+      keyid,
+    };
+    let contentSignature = await ContentSignature.findOne(identity);
+
+    if (contentSignature && !matchesV1Artifact(contentSignature, prepared, signature)) {
+      throw contentSignatureConflict(
+        'A different signed payload already exists for this content, location, and key',
+      );
+    }
+
+    if (!contentSignature) {
+      try {
+        contentSignature = await ContentSignature.create({
+          ...identity,
+          claimsHash: prepared.claimsHash,
+          signedAt: prepared.signedAt,
+          domain: sourceOrigin,
+          algorithm,
+          scope: prepared.scope,
+          sourceURL: prepared.sourceURL,
+          authorId: author._id,
+          keyId: key._id,
+          signature,
+          claims: claimsObject(prepared.claims),
+        });
+      } catch (error) {
+        // Two identical first submissions can race the unique v1 identity
+        // index. Re-read the winner and treat it as an idempotent retry. A
+        // different payload still receives the explicit conflict response.
+        if (!isDuplicateKeyError(error)) throw error;
+        contentSignature = await ContentSignature.findOne(identity);
+        if (!contentSignature) throw error;
+        if (!matchesV1Artifact(contentSignature, prepared, signature)) {
+          throw contentSignatureConflict(
+            'A different signed payload already exists for this content, location, and key',
+          );
+        }
+      }
+    }
+
+    await ContentOccurrence.findOneAndUpdate(
+      { signatureId: contentSignature._id, url: prepared.sourceURL },
+      {
+        signatureId: contentSignature._id,
+        url: prepared.sourceURL,
+        domain: sourceOrigin,
+        signatureValid: true,
+        lastSeen: Date.now(),
+      },
+      { upsert: true, setDefaultsOnInsert: true },
+    );
+
+    // Return the complete v1 attribute set, so the caller can publish a
+    // signed-section without reconstructing any cryptographic field.
     res.status(201).json({
-      contentHash,
-      claimsHash,
-      signedAt,
-      domain,
+      profile: PROFILE.signature,
+      context: PROFILE.context,
+      canonicalizationProfile: PROFILE.canonicalization,
+      attributeProfile: PROFILE.attributes,
+      urlProfile: PROFILE.url,
+      contentHash: prepared.contentHash,
+      claimsHash: prepared.claimsHash,
+      signedAt: prepared.signedAt,
+      scope: prepared.scope,
+      location: prepared.location,
+      sourceURL: prepared.sourceURL,
+      domain: sourceOrigin,
       authorId: author._id,
       signature,
-      keyid: keyidFor(req, key),
-      algorithm: normalizeAlgorithm(key.algorithm),
-      claims: claimsObject(claims),
+      keyid,
+      algorithm,
+      claims: prepared.claims,
       createdAt: contentSignature.createdAt
     });
   } catch (error) {
     console.error('Sign content error:', error);
-    res.status(400).json({
-      code: 'BAD_REQUEST',
-      message: detailFor(error)
+    const status = error.statusCode || 400;
+    return problem(res, status, status === 409 ? 'Content signature conflict' : 'Invalid v1 signing request', detailFor(error), {
+      type: error.problemType || 'https://htmltrust.org/errors/content-signing-invalid',
     });
   }
 };

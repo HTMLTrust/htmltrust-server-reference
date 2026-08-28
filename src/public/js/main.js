@@ -49,7 +49,7 @@ async function apiRequest(endpoint, method, data = null, headers = {}) {
 
 // Hash content using SHA-256
 function hashContent(content) {
-  return 'sha256:' + CryptoJS.SHA256(content).toString(CryptoJS.enc.Hex);
+  return 'sha256:' + CryptoJS.SHA256(content).toString(CryptoJS.enc.Base64).replace(/=+$/, '');
 }
 
 // Create Author Form
@@ -111,9 +111,9 @@ document.getElementById('sign-content-form').addEventListener('submit', async fu
   
   try {
     const content = document.getElementById('content-text').value;
-    const domain = document.getElementById('content-domain').value;
+    const sourceURL = document.getElementById('content-source-url').value;
+    const scope = document.getElementById('content-scope').value;
     const claimsJson = document.getElementById('content-claims').value;
-    const authorId = document.getElementById('author-id').value;
     const authorApiKey = document.getElementById('author-api-key').value;
     
     // Hash the content
@@ -127,9 +127,18 @@ document.getElementById('sign-content-form').addEventListener('submit', async fu
       throw new Error('Invalid JSON for claims');
     }
     
+    if (!Array.isArray(claims)) {
+      claims = Object.entries(claims).map(([name, content]) => ({ name, content: String(content) }));
+    }
+    const signedAt = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+    claims = claims.filter(({ name }) => name !== 'signed-at');
+    claims.push({ name: 'signed-at', content: signedAt });
+
     const data = {
       contentHash,
-      domain,
+      sourceURL,
+      scope,
+      signedAt,
       claims
     };
     
