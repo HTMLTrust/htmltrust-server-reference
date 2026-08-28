@@ -19,10 +19,17 @@ const KeySchema = new mongoose.Schema({
   publicId: {
     type: String,
     // New keys always receive the default below. Legacy hydrated keys may
-    // still omit this field until migrate:v1 backfills them, so updates to
-    // those rows must remain valid during the migration window.
+    // still omit or contain null here until migrate:v1 backfills them, so
+    // updates to those rows must remain valid during the migration window.
     required: function publicIdRequired() {
-      return this.isNew || this.publicId !== undefined;
+      return this.isNew;
+    },
+    immutable: true,
+    validate: {
+      validator(value) {
+        return !this.isNew || /^k_[A-Za-z0-9_-]{20,64}$/.test(value);
+      },
+      message: 'publicId must be an opaque k_ identifier',
     },
     unique: true,
     sparse: true,

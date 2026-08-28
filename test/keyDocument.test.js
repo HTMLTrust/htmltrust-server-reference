@@ -52,16 +52,19 @@ test("new directory keys receive an opaque public identifier", () => {
   assert.notEqual(key.publicId, String(key._id));
 });
 
-test("legacy hydrated keys keep their ObjectId URL compatibility alias", () => {
+test("legacy hydrated keys keep their ObjectId URL compatibility alias and update safely", () => {
   const legacyId = "507f1f77bcf86cd799439011";
-  const key = Key.hydrate({
-    _id: legacyId,
-    authorId: "507f1f77bcf86cd799439012",
-    publicKey: "legacy",
-    algorithm: "ed25519",
-  });
-  assert.equal(key.publicId, undefined);
-  key.trustScore = 0.75;
-  assert.equal(key.validateSync(), undefined, "legacy key updates must remain valid before migration");
-  assert.equal(publicKeyId(key), legacyId);
+  for (const publicId of [undefined, null]) {
+    const key = Key.hydrate({
+      _id: legacyId,
+      authorId: "507f1f77bcf86cd799439012",
+      publicKey: "legacy",
+      algorithm: "ed25519",
+      ...(publicId === null ? { publicId } : {}),
+    });
+    assert.equal(key.publicId, publicId);
+    key.trustScore = 0.75;
+    assert.equal(key.validateSync(), undefined, "legacy key updates must remain valid before migration");
+    assert.equal(publicKeyId(key), legacyId);
+  }
 });

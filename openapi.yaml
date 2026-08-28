@@ -2011,6 +2011,61 @@ paths:
                 $ref: "#/components/schemas/Error"
 
   /api/endorsements:
+    get:
+      tags:
+        - Endorsements
+      summary: List endorsements for a content hash (compatibility)
+      description: |
+        Returns all endorsements on file for a given content hash. This
+        legacy `/api` route is public and remains available for pre-v1
+        clients. Clients MUST verify each endorsement locally.
+      operationId: listEndorsementsCompatibility
+      parameters:
+        - name: content-hash
+          in: query
+          required: true
+          description: The content hash to look up endorsements for (for example, `sha256:...`).
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Array of endorsements
+          headers:
+            Cache-Control:
+              schema: { type: string }
+            ETag:
+              schema: { type: string }
+            Vary:
+              schema: { type: string }
+          content:
+            application/htmltrust-endorsement+json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Endorsement"
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Endorsement"
+        "400":
+          description: Invalid input
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "406":
+          description: Requested representation is not supported
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: Directory could not read endorsements
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
     post:
       tags:
         - Endorsements
@@ -2018,10 +2073,134 @@ paths:
       description: |
         Stores a structured endorsement document. The signed payload is the
         JSON canonicalization of the endorsement document with `signature`
-        omitted. The canonical endpoint requires RFC 9421 authentication;
-        the `/api/endorsements` compatibility route also accepts the legacy
-        API-key scheme.
+        omitted. The compatibility route accepts either the RFC 9421
+        signature or the legacy general API key scheme.
       operationId: createEndorsement
+      security:
+        - HttpSignatureInput: []
+          HttpMessageSignature: []
+        - GeneralApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Endorsement"
+          application/htmltrust-endorsement+json:
+            schema:
+              $ref: "#/components/schemas/Endorsement"
+      responses:
+        "201":
+          description: Endorsement stored
+          headers:
+            Cache-Control:
+              schema: { type: string }
+            Location:
+              schema: { type: string }
+          content:
+            application/htmltrust-endorsement+json:
+              schema:
+                $ref: "#/components/schemas/Endorsement"
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Endorsement"
+        "400":
+          description: Invalid input
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "401":
+          description: Unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "406":
+          description: Requested representation is not supported
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "415":
+          description: Request body media type is not supported
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: Verified endorsement could not be stored
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /api/endorsements/{id}:
+    delete:
+      tags:
+        - Endorsements
+      summary: Delete an endorsement (compatibility)
+      description: |
+        Removes an endorsement from the legacy `/api` surface. The route
+        accepts an RFC 9421 signature from the endorser or an administrator
+        API key. The route's controller also checks that a signed caller is
+        the endorser before deleting the record.
+      operationId: deleteEndorsementCompatibility
+      security:
+        - HttpSignatureInput: []
+          HttpMessageSignature: []
+        - AdminApiKey: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Endorsement deleted
+        "400":
+          description: Invalid endorsement identifier or request
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "401":
+          description: Unauthorized
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "403":
+          description: The authenticated key is not the endorser
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "404":
+          description: Endorsement not found
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: Directory could not delete the endorsement
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+
+  /endorsements:
+    post:
+      tags:
+        - Endorsements
+      summary: Submit a signed endorsement for storage
+      description: |
+        Stores a structured endorsement document. The signed payload is the
+        JSON canonicalization of the endorsement document with `signature`
+        omitted. The canonical endpoint requires the exact RFC 9421 HTMLTrust
+        v1 signature profile and has no API-key fallback.
+      operationId: createCanonicalEndorsement
       security:
         - HttpSignatureInput: []
           HttpMessageSignature: []
@@ -2079,7 +2258,3 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/Problem"
-
-  /endorsements:
-    post:
-      $ref: "#/paths/~1api~1endorsements/post"
