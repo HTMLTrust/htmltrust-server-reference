@@ -132,8 +132,23 @@ async function main() {
     runner.on("exit", (code) => resolveExit(code ?? 1));
   });
 
+  // Exercise the canonical root endpoints separately from the explicit
+  // pre-v1 `/api` compatibility fixtures.
+  const v1Runner = spawn(
+    process.execPath,
+    [
+      resolve(SELF_DIR, "v1-smoke.mjs"),
+      `http://localhost:${SERVER_PORT}`,
+      GENERAL_API_KEY,
+    ],
+    { stdio: "inherit" },
+  );
+  const v1Exit = await new Promise((resolveExit) => {
+    v1Runner.on("exit", (code) => resolveExit(code ?? 1));
+  });
+
   shuttingDown = true;
-  await shutdown(runnerExit);
+  await shutdown(runnerExit === 0 && v1Exit === 0 ? 0 : 1);
 }
 
 let shuttingDown = false;

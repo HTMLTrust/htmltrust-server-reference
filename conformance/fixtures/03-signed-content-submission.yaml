@@ -32,7 +32,7 @@ steps:
         X-AUTHOR-API-KEY: $authorApiKey
       body:
         contentHash: "sha256:xJTJYuXl1MuP1EjRLhKtgMUZvvc6qexrTMHyVnVL+Yc"
-        claimsHash: "sha256:EOlXUVED7G9RI90/iTXXNtY79KQEW6LxLVOVtsjlHWs"
+        claimsHash: "sha256:4LOflWusiW26FjvAHhwAZpPqZrLblKkYZ1QYKPORKDo"
         domain: "https://conformance.example.com"
         signedAt: "2026-05-12T12:00:00.000Z"
         claims:
@@ -60,7 +60,7 @@ steps:
       path: /content/verify
       body:
         contentHash: "sha256:xJTJYuXl1MuP1EjRLhKtgMUZvvc6qexrTMHyVnVL+Yc"
-        claimsHash: "sha256:EOlXUVED7G9RI90/iTXXNtY79KQEW6LxLVOVtsjlHWs"
+        claimsHash: "sha256:4LOflWusiW26FjvAHhwAZpPqZrLblKkYZ1QYKPORKDo"
         domain: "https://conformance.example.com"
         signedAt: "2026-05-12T12:00:00.000Z"
         authorId: $authorId

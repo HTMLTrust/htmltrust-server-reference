@@ -10,14 +10,10 @@ const { resolveUsableKey } = require("../utils/keyResolution");
  *    signature input MUST cover the `(request-target)`, `host`, `date`, and
  *    `content-digest` components at a minimum."
  *
- * This is a deliberately minimal verifier, not a general RFC 9421 library.
- * It supports exactly what the draft requires:
- *
- *   Covered components: `@method` plus `@target-uri` or `@path` (equivalently
- *   `@request-target`), `@authority` or `host`, `date`, and — whenever the
- *   request carries a body — `content-digest`. Requests covering a smaller
- *   set are rejected; covering more is allowed and the extra components are
- *   included in the signature base as normal.
+ * This is a deliberately small verifier, not a general RFC 9421 library.
+ * Strict mode implements the HTMLTrust v1 request profile. Compatibility
+ * mode keeps the broader component aliases accepted by the pre-v1 `/api`
+ * routes.
  *
  *   Derived components with parameters (`@query-param`, `;req`, `;sf`, `;bs`)
  *   are NOT supported and are rejected rather than silently ignored, because
@@ -31,6 +27,8 @@ const { resolveUsableKey } = require("../utils/keyResolution");
 
 // Accepted clock skew for the `created` parameter and the `date` header.
 const MAX_SKEW_SECONDS = 300;
+const V1_COMPONENTS = ["@method", "@target-uri", "host", "date", "content-digest"];
+const IMF_FIXDATE = /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT$/;
 
 // Signatures already seen inside the acceptance window, to stop a captured
 // request from being replayed verbatim. Bounded so it cannot grow without
@@ -95,6 +93,52 @@ const splitLabel = (member) => {
   return [member.slice(0, eq).trim(), member.slice(eq + 1).trim()];
 };
 
+const splitParameters = (tail) => {
+  if (tail.length > 0 && !tail.startsWith(";")) {
+    throw new SignatureError("signature parameters must follow the inner list");
+  }
+  const parts = [];
+  let inQuotes = false;
+  let start = 1;
+  for (let index = 1; index < tail.length; index += 1) {
+    const ch = tail[index];
+    if (inQuotes && ch === "\\") {
+      index += 1;
+    } else if (ch === '"') {
+      inQuotes = !inQuotes;
+    } else if (ch === ";" && !inQuotes) {
+      parts.push(tail.slice(start, index));
+      start = index + 1;
+    }
+  }
+  if (inQuotes) throw new SignatureError("unterminated string signature parameter");
+  if (tail.length > 0) parts.push(tail.slice(start));
+  return parts;
+};
+
+const parseParameterValue = (raw) => {
+  if (/^"(?:[\x20-\x21\x23-\x5b\x5d-\x7e]|\\["\\])*"$/.test(raw)) {
+    return {
+      type: "string",
+      value: raw.slice(1, -1).replace(/\\(["\\])/g, "$1"),
+    };
+  }
+  if (/^-?(?:0|[1-9]\d*)$/.test(raw)) {
+    const value = Number(raw);
+    if (!Number.isSafeInteger(value)) {
+      throw new SignatureError("integer signature parameter is outside the safe range");
+    }
+    return { type: "integer", value };
+  }
+  if (/^[A-Za-z*][A-Za-z0-9_.*:\/-]*$/.test(raw)) {
+    return { type: "token", value: raw };
+  }
+  if (raw === "?0" || raw === "?1") {
+    return { type: "boolean", value: raw === "?1" };
+  }
+  throw new SignatureError("malformed signature parameter value");
+};
+
 /**
  * Parse one `Signature-Input` value: an inner list of quoted component
  * identifiers followed by `;name=value` parameters.
@@ -116,23 +160,32 @@ const parseSignatureInputValue = (raw) => {
   }
 
   const params = {};
+  const paramTypes = {};
   const tail = raw.slice(close + 1);
-  for (const part of tail.split(";")) {
+  for (const part of splitParameters(tail)) {
     const chunk = part.trim();
     if (!chunk) continue;
     const eq = chunk.indexOf("=");
+    const rawName = (eq === -1 ? chunk : chunk.slice(0, eq)).trim();
+    if (!/^[a-z*][a-z0-9_.*-]*$/.test(rawName)) {
+      throw new SignatureError(`invalid signature parameter name ${rawName}`);
+    }
+    const name = rawName.toLowerCase();
+    if (Object.hasOwn(params, name)) {
+      throw new SignatureError(`duplicate signature parameter ${name}`);
+    }
     if (eq === -1) {
-      params[chunk.toLowerCase()] = true;
+      params[name] = true;
+      paramTypes[name] = "boolean";
       continue;
     }
-    const name = chunk.slice(0, eq).trim().toLowerCase();
-    let value = chunk.slice(eq + 1).trim();
-    if (value.startsWith('"') && value.endsWith('"')) value = value.slice(1, -1);
-    else if (/^-?\d+$/.test(value)) value = Number(value);
+    const parsed = parseParameterValue(chunk.slice(eq + 1).trim());
+    const { type, value } = parsed;
     params[name] = value;
+    paramTypes[name] = type;
   }
 
-  return { components, params, raw };
+  return { components, params, paramTypes, raw };
 };
 
 const parseSignatureValue = (raw) => {
@@ -241,6 +294,43 @@ const assertRequiredComponents = (components, hasBody) => {
   }
 };
 
+const assertV1Profile = ({ label, components, params, paramTypes, rawSignature }) => {
+  if (label !== "sig1") {
+    throw new SignatureError('HTMLTrust v1 requires the signature label "sig1"');
+  }
+  if (
+    components.length !== V1_COMPONENTS.length ||
+    components.some((component, index) => component !== V1_COMPONENTS[index])
+  ) {
+    throw new SignatureError(
+      `HTMLTrust v1 requires exactly these covered components in order: ${V1_COMPONENTS.join(", ")}`,
+    );
+  }
+  if (paramTypes.created !== "integer" || !Number.isSafeInteger(params.created) || params.created < 0) {
+    throw new SignatureError("HTMLTrust v1 requires an integer `created` parameter");
+  }
+  if (paramTypes.keyid !== "string" || params.keyid.length === 0) {
+    throw new SignatureError("HTMLTrust v1 requires a non-empty `keyid` parameter");
+  }
+  if (paramTypes.alg !== "string" || params.alg !== "ed25519") {
+    throw new SignatureError('HTMLTrust v1 requires `alg="ed25519"`');
+  }
+  if (params.nonce !== undefined && (paramTypes.nonce !== "string" || params.nonce.length === 0)) {
+    throw new SignatureError("the `nonce` parameter must be a non-empty string");
+  }
+  const encoded = rawSignature.slice(1, -1);
+  if (!/^[A-Za-z0-9+/]+$/.test(encoded)) {
+    throw new SignatureError("HTMLTrust v1 signatures must use canonical unpadded Base64");
+  }
+  const decoded = Buffer.from(encoded.padEnd(Math.ceil(encoded.length / 4) * 4, "="), "base64");
+  const canonical = decoded.toString("base64").replace(/=+$/, "");
+  if (canonical !== encoded || decoded.length !== 64) {
+    throw new SignatureError(
+      "HTMLTrust v1 signatures must be a canonical unpadded Base64 encoding of 64 bytes",
+    );
+  }
+};
+
 const assertFreshness = (req, params) => {
   const now = Math.floor(Date.now() / 1000);
   if (typeof params.created === "number" && Math.abs(now - params.created) > MAX_SKEW_SECONDS) {
@@ -251,7 +341,12 @@ const assertFreshness = (req, params) => {
   }
   const date = headerValue(req, "date");
   const parsed = date ? Date.parse(date) : NaN;
-  if (!Number.isFinite(parsed)) throw new SignatureError("date header is missing or unparseable");
+  if (
+    !date || !IMF_FIXDATE.test(date) || !Number.isFinite(parsed) ||
+    new Date(parsed).toUTCString() !== date
+  ) {
+    throw new SignatureError("date header must be a valid IMF-fixdate HTTP date");
+  }
   if (Math.abs(now - Math.floor(parsed / 1000)) > MAX_SKEW_SECONDS) {
     throw new SignatureError("date header is outside the acceptance window");
   }
@@ -297,7 +392,10 @@ const verifyBytes = (base, signature, publicKeyPem, algorithm) => {
  *
  * @returns {Promise<{ok: true, actor: object} | {ok: false, status: number, title: string, detail: string}>}
  */
-const verifyHttpMessageSignature = async (req, { resolve = resolveUsableKey } = {}) => {
+const verifyHttpMessageSignature = async (
+  req,
+  { resolve = resolveUsableKey, strictV1 = false } = {},
+) => {
   const inputHeader = headerValue(req, "signature-input");
   const signatureHeader = headerValue(req, "signature");
   if (!inputHeader || !signatureHeader) {
@@ -305,25 +403,45 @@ const verifyHttpMessageSignature = async (req, { resolve = resolveUsableKey } = 
   }
 
   try {
-    const signatures = new Map(splitDictionary(signatureHeader).map((member) => splitLabel(member)));
-    const hasBody = Boolean(req.rawBody && req.rawBody.length > 0);
+    const signatureMembers = splitDictionary(signatureHeader).map((member) => splitLabel(member));
+    const inputMembers = splitDictionary(inputHeader).map((member) => splitLabel(member));
+    if (strictV1) {
+      if (
+        signatureMembers.length !== 1 ||
+        inputMembers.length !== 1 ||
+        signatureMembers[0][0] !== "sig1" ||
+        inputMembers[0][0] !== "sig1"
+      ) {
+        throw new SignatureError('HTMLTrust v1 accepts exactly one signature labeled "sig1"');
+      }
+    }
+    const signatures = new Map(signatureMembers);
+    // An explicitly captured empty buffer is still a body representation. Its
+    // content-digest must bind to the empty byte sequence just like any other
+    // raw body; checking `.length > 0` would skip that verification.
+    const hasBody = req.rawBody !== undefined && req.rawBody !== null;
     let lastError = null;
 
-    for (const member of splitDictionary(inputHeader)) {
-      const [label, rawValue] = splitLabel(member);
+    for (const [label, rawValue] of inputMembers) {
       const rawSignature = signatures.get(label);
       if (!rawSignature) continue;
 
       try {
-        const { components, params, raw } = parseSignatureInputValue(rawValue);
-        if (!params.keyid || typeof params.keyid !== "string") {
-          throw new SignatureError("signature is missing a keyid parameter");
+        const { components, params, paramTypes, raw } = parseSignatureInputValue(rawValue);
+        if (strictV1) {
+          assertV1Profile({ label, components, params, paramTypes, rawSignature });
+        } else {
+          if (!params.keyid || typeof params.keyid !== "string") {
+            throw new SignatureError("signature is missing a keyid parameter");
+          }
+          assertRequiredComponents(components, hasBody);
         }
-        assertRequiredComponents(components, hasBody);
         assertFreshness(req, params);
-        if (hasBody) verifyContentDigest(req);
+        // A covered digest always has to be tied back to the exact bytes,
+        // including an empty sequence when no parser supplied rawBody.
+        if (components.includes("content-digest")) verifyContentDigest(req);
 
-        const resolution = await resolve(params.keyid, { req });
+        const resolution = await resolve(params.keyid, { req, algorithm: params.alg });
         if (!resolution.ok) {
           return {
             ok: false,
@@ -334,6 +452,9 @@ const verifyHttpMessageSignature = async (req, { resolve = resolveUsableKey } = 
           };
         }
         const { resolved } = resolution;
+        if (strictV1 && resolved.algorithm !== "ed25519") {
+          throw new SignatureError("HTMLTrust v1 request authentication requires an Ed25519 key");
+        }
         if (params.alg && params.alg !== resolved.algorithm) {
           throw new SignatureError("signature `alg` does not match the resolved key algorithm");
         }
@@ -378,13 +499,13 @@ const verifyHttpMessageSignature = async (req, { resolve = resolveUsableKey } = 
  * so the legacy static API-key schemes can stay available for the demo UI and
  * the conformance suite; see `src/middleware/auth.js`.
  */
-const requireActorSignature = ({ fallback } = {}) => async (req, res, next) => {
+const requireActorSignature = ({ fallback, strictV1 = false } = {}) => async (req, res, next) => {
   const hasSignature = Boolean(req.headers["signature-input"] || req.headers.signature);
   if (!hasSignature && typeof fallback === "function") {
     return fallback(req, res, next);
   }
 
-  const result = await verifyHttpMessageSignature(req);
+  const result = await verifyHttpMessageSignature(req, { strictV1 });
   if (!result.ok) {
     res.set("WWW-Authenticate", 'Signature realm="htmltrust-directory"');
     return problem(res, result.status, result.title, result.detail, result.type ? { type: result.type } : {});
@@ -396,5 +517,6 @@ const requireActorSignature = ({ fallback } = {}) => async (req, res, next) => {
 module.exports = {
   buildSignatureBase,
   requireActorSignature,
+  V1_COMPONENTS,
   verifyHttpMessageSignature,
 };

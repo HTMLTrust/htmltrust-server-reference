@@ -674,6 +674,7 @@ async function runScenario(config, openapi, fixture, opts) {
     adminApiKey: config.adminApiKey,
     run_nonce: runNonce,
     baseUrl: `${config.targetUrl}${config.basePath}`,
+    rootUrl: config.targetUrl,
     signerPublicKeyPem: signingKey.publicKey,
     __signingKey: signingKey,
     ...(fixture.doc.vars || {}),

@@ -19,6 +19,8 @@ const {
 } = require('../utils/htmltrustProtocol');
 const { canonicalizeClaims } = require('../utils/claims');
 const { directoryKeyUrl } = require('../utils/directoryUrl');
+const { validateV1ContentSubmission } = require('../utils/signingProfile');
+const { negotiatedType } = require('../middleware/contentNegotiation');
 
 /**
  * Build the canonical binding string that is actually signed.
@@ -113,18 +115,25 @@ const resolveSubmissionKey = async (req, keyid) => {
   return resolution;
 };
 
-const contentRecord = async (req, contentHash) => {
-  const signatures = await ContentSignature.find({ contentHash }).sort({ createdAt: 1 });
+const contentRecord = async (req, contentHash, { v1Only = false } = {}) => {
+  const query = { contentHash };
+  if (v1Only) query.profile = 'htmltrust-signature-v1';
+  const signatures = await ContentSignature.find(query).sort({ createdAt: 1 });
   if (signatures.length === 0) return null;
 
   const signers = await Promise.all(signatures.map(async (signature) => {
     const key = await Key.findById(signature.keyId);
-    return {
-      keyid: key ? keyidFor(req, key) : String(signature.keyId),
+    const record = {
+      profile: signature.profile || 'legacy-colon-binding',
+      keyid: signature.keyid || (key ? keyidFor(req, key) : String(signature.keyId)),
+      algorithm: signature.algorithm || (key ? normalizeAlgorithm(key.algorithm) : undefined),
       signedAt: signature.signedAt,
-      domain: signature.domain,
+      scope: signature.scope,
+      location: signature.location,
       signature: signature.signature,
     };
+    if (!signature.profile) record.domain = signature.domain;
+    return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined));
   }));
 
   const endorsementCount = await Endorsement.countDocuments({
@@ -454,17 +463,51 @@ exports.registerOccurrence = async (req, res) => {
  * @access  Public
  */
 exports.getContentRecord = async (req, res) => {
+  let contentHash;
   try {
-    const contentHash = assertContentHash(req.params.contentHash, 'contentHash');
+    contentHash = assertContentHash(req.params.contentHash, 'contentHash');
+  } catch (error) {
+    return problem(res, 400, 'Invalid content hash', detailFor(error));
+  }
+
+  try {
     const record = await contentRecord(req, contentHash);
     if (!record) {
       return problem(res, 404, 'Content not found', 'No content record exists for the requested hash', {
         contentHash,
       });
     }
-    res.type('application/htmltrust-content+json').status(200).json(record);
+    res.type(negotiatedType(req, 'application/htmltrust-content+json')).status(200).json(record);
+  } catch (error) {
+    console.error('Get content record error:', error);
+    return problem(res, 500, 'Directory read failure', 'The directory could not read the content record', {
+      type: 'https://htmltrust.org/errors/storage-failure',
+    });
+  }
+};
+
+/** Canonical v1 GET /content/:contentHash. */
+exports.getContentRecordV1 = async (req, res) => {
+  let contentHash;
+  try {
+    contentHash = assertContentHash(req.params.contentHash, 'contentHash');
   } catch (error) {
     return problem(res, 400, 'Invalid content hash', detailFor(error));
+  }
+
+  try {
+    const record = await contentRecord(req, contentHash, { v1Only: true });
+    if (!record) {
+      return problem(res, 404, 'Content not found', 'No v1 content record exists for the requested hash', {
+        contentHash,
+      });
+    }
+    return res.type(negotiatedType(req, 'application/htmltrust-content+json')).status(200).json(record);
+  } catch (error) {
+    console.error('Get v1 content record error:', error);
+    return problem(res, 500, 'Directory read failure', 'The directory could not read the content record', {
+      type: 'https://htmltrust.org/errors/storage-failure',
+    });
   }
 };
 
@@ -558,25 +601,161 @@ exports.submitContent = async (req, res) => {
     res
       .status(201)
       .location(`/api/content/${encodeURIComponent(contentHash)}`)
-      .type('application/htmltrust-content+json')
+      .type(negotiatedType(req, 'application/htmltrust-content+json'))
       .json(record);
   } catch (error) {
     return problem(res, 400, 'Invalid content submission', detailFor(error));
   }
 };
 
-exports.listContentEndorsements = async (req, res) => {
+/**
+ * Submit and re-verify an htmltrust-signature-v1 occurrence.
+ *
+ * This is the canonical POST /content handler. The `/api/content` handler
+ * above remains the explicit pre-v1 compatibility endpoint.
+ */
+exports.submitContentV1 = async (req, res) => {
+  let submission;
   try {
-    const contentHash = assertContentHash(req.params.contentHash, 'contentHash');
+    submission = await validateV1ContentSubmission(req.body);
+  } catch (error) {
+    return problem(res, 400, 'Invalid content submission', detailFor(error), {
+      type: 'https://htmltrust.org/errors/content-submission-invalid',
+    });
+  }
+
+  try {
+    const resolution = await resolveUsableKey(submission.keyid, { req, algorithm: submission.algorithm });
+    if (!resolution.ok) {
+      return problem(
+        res,
+        400,
+        'Key resolution failed',
+        `The submitted keyid could not be resolved to a usable key (${resolution.reason})`,
+        {
+          type: `https://htmltrust.org/errors/${resolution.reason}`,
+          keyid: submission.keyid,
+        },
+      );
+    }
+    if (resolution.resolved.algorithm !== submission.algorithm) {
+      return problem(
+        res,
+        400,
+        'Algorithm mismatch',
+        `The submission declares ${submission.algorithm} but the resolved key uses ${resolution.resolved.algorithm}`,
+        { type: 'https://htmltrust.org/errors/algorithm-mismatch' },
+      );
+    }
+    if (!verifySignature(
+      submission.payload,
+      submission.signature,
+      resolution.resolved.publicKeyPem,
+      submission.algorithm,
+    )) {
+      return problem(
+        res,
+        400,
+        'Signature verification failed',
+        'The submitted signature did not verify against the canonical signing payload.',
+        {
+          type: 'https://htmltrust.org/errors/signature-invalid',
+          contentHash: submission.contentHash,
+        },
+      );
+    }
+
+    const localKey = resolution.resolved.key;
+    const identity = {
+      contentHash: submission.contentHash,
+      profile: submission.profile,
+      location: submission.location,
+      keyid: submission.keyid,
+    };
+    let contentSignature = await ContentSignature.findOne(identity);
+    const storedClaims = Object.fromEntries(
+      submission.claims.map(({ name, content }) => [name, content]),
+    );
+    if (contentSignature) {
+      contentSignature.algorithm = submission.algorithm;
+      contentSignature.claimsHash = submission.claimsHash;
+      contentSignature.signedAt = submission.signedAt;
+      contentSignature.scope = submission.scope;
+      contentSignature.sourceURL = submission.sourceURL;
+      contentSignature.signature = submission.signature;
+      contentSignature.claims = storedClaims;
+      contentSignature.occurrences += 1;
+      if (localKey) {
+        contentSignature.authorId = localKey.authorId;
+        contentSignature.keyId = localKey._id;
+      }
+      await contentSignature.save();
+    } else {
+      contentSignature = await ContentSignature.create({
+        ...identity,
+        algorithm: submission.algorithm,
+        claimsHash: submission.claimsHash,
+        signedAt: submission.signedAt,
+        scope: submission.scope,
+        sourceURL: submission.sourceURL,
+        signature: submission.signature,
+        claims: storedClaims,
+        authorId: localKey && localKey.authorId,
+        keyId: localKey && localKey._id,
+      });
+    }
+
+    const sourceOrigin = new URL(submission.sourceURL).origin;
+    await ContentOccurrence.findOneAndUpdate(
+      { signatureId: contentSignature._id, url: submission.sourceURL },
+      {
+        signatureId: contentSignature._id,
+        url: submission.sourceURL,
+        domain: sourceOrigin,
+        signatureValid: true,
+        lastSeen: Date.now(),
+      },
+      { upsert: true, setDefaultsOnInsert: true },
+    );
+
+    const record = await contentRecord(req, submission.contentHash, { v1Only: true });
+    return res
+      .status(201)
+      .location(`/content/${encodeURIComponent(submission.contentHash)}`)
+      .type(negotiatedType(req, 'application/htmltrust-content+json'))
+      .json(record);
+  } catch (error) {
+    console.error('Submit v1 content error:', error);
+    return problem(res, 500, 'Content storage failed', detailFor(
+      error,
+      'The directory could not store the verified content record',
+    ), {
+      type: 'https://htmltrust.org/errors/content-storage-failed',
+    });
+  }
+};
+
+exports.listContentEndorsements = async (req, res) => {
+  let contentHash;
+  try {
+    contentHash = assertContentHash(req.params.contentHash, 'contentHash');
+  } catch (error) {
+    return problem(res, 400, 'Invalid content hash', detailFor(error));
+  }
+
+  try {
     const endorsements = await Endorsement.find({
       $or: [{ endorsement: contentHash }, { contentHash }],
     }).sort({ createdAt: -1 });
     const { toEndorsementDocument } = require('./endorsementController');
     res
-      .type('application/htmltrust-endorsement+json')
+      .type(negotiatedType(req, 'application/htmltrust-endorsement+json'))
       .status(200)
       .json(endorsements.map(toEndorsementDocument));
   } catch (error) {
-    return problem(res, 400, 'Invalid content hash', detailFor(error));
+    console.error('List content endorsements error:', error);
+    return problem(res, 500, 'Directory read failure', 'The directory could not read endorsements', {
+      type: 'https://htmltrust.org/errors/storage-failure',
+    });
   }
 };

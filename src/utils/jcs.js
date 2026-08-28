@@ -9,10 +9,9 @@
  *
  *   §3.2.1  Whitespace between tokens is removed.
  *   §3.2.2.1 Literals: `null`, `true`, `false`.
- *   §3.2.2.2 Strings use the ECMAScript `JSON.stringify` escaping, including
- *            the ES2019 "well-formed" escaping of lone surrogates. Node's
- *            `JSON.stringify` implements exactly this, so it is used directly
- *            rather than reimplemented.
+ *   §3.2.2.2 Strings use ECMAScript JSON escaping. Lone UTF-16 surrogates are
+ *            rejected because RFC 8785 requires I-JSON input and explicitly
+ *            treats them as invalid Unicode data.
  *   §3.2.2.3 Numbers use the ECMAScript `Number::toString` algorithm, which is
  *            what `JSON.stringify` emits for finite numbers (including the
  *            `-0` -> `0` mapping JCS requires). Non-finite numbers are not
@@ -24,9 +23,8 @@
  *            claims canonicalization in draft §4.6, which sorts by UTF-8
  *            bytes.)
  *
- * Arrays keep their element order. Values that have no JSON representation
- * (`undefined`, functions, symbols) are dropped from objects and serialized as
- * `null` inside arrays, matching `JSON.stringify` semantics.
+ * Arrays keep their element order. Values outside the JSON data model are
+ * rejected rather than silently changing a signed payload.
  */
 
 /**
@@ -37,12 +35,20 @@ const byUtf16CodeUnit = (a, b) => {
   return a < b ? -1 : 1;
 };
 
-// Values JSON.stringify silently omits from objects and replaces with null
-// inside arrays. BigInt is deliberately NOT in this set: JSON.stringify
-// throws on it, and silently dropping a numeric field would change the
-// signed payload without anyone noticing.
-const isOmittable = (value) =>
-  value === undefined || typeof value === "function" || typeof value === "symbol";
+const assertUnicodeScalarString = (value) => {
+  for (let index = 0; index < value.length; index += 1) {
+    const unit = value.charCodeAt(index);
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) {
+        throw new Error("JCS: string contains a lone UTF-16 surrogate");
+      }
+      index += 1;
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+      throw new Error("JCS: string contains a lone UTF-16 surrogate");
+    }
+  }
+};
 
 const serialize = (value, out) => {
   // Honour toJSON() the way JSON.stringify does, so Date and Mongoose
@@ -68,6 +74,7 @@ const serialize = (value, out) => {
       out.push(JSON.stringify(value));
       return;
     case "string":
+      assertUnicodeScalarString(value);
       out.push(JSON.stringify(value));
       return;
     case "bigint":
@@ -80,22 +87,18 @@ const serialize = (value, out) => {
     out.push("[");
     for (let i = 0; i < value.length; i += 1) {
       if (i > 0) out.push(",");
-      const element = value[i];
-      // JSON.stringify replaces non-representable array elements with null.
-      if (isOmittable(element)) out.push("null");
-      else serialize(element, out);
+      serialize(value[i], out);
     }
     out.push("]");
     return;
   }
 
   if (typeof value === "object") {
-    const names = Object.keys(value)
-      .filter((name) => !isOmittable(value[name]))
-      .sort(byUtf16CodeUnit);
+    const names = Object.keys(value).sort(byUtf16CodeUnit);
     out.push("{");
     for (let i = 0; i < names.length; i += 1) {
       if (i > 0) out.push(",");
+      assertUnicodeScalarString(names[i]);
       out.push(JSON.stringify(names[i]));
       out.push(":");
       serialize(value[names[i]], out);

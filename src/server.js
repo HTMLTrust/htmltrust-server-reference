@@ -57,6 +57,10 @@ app.use(cors());
 app.use(
   express.json({
     limit: process.env.MAX_REQUEST_BODY || '256kb',
+    // Canonical directory resources use vendor JSON media types such as
+    // application/htmltrust-content+json. Keep application/json accepted for
+    // compatibility with the pre-v1 API surface.
+    type: ['application/json', 'application/*+json'],
     verify: (req, res, buf) => {
       req.rawBody = buf;
     },
@@ -112,7 +116,69 @@ const authLimiter = limiter(60 * 1000, Number(process.env.RATE_LIMIT_AUTH || 30)
 
 // Routes that mutate reputation or add records are the ones worth flooding.
 const writeLimiter = limiter(60 * 1000, Number(process.env.RATE_LIMIT_WRITE || 60));
+const { negotiate } = require('./middleware/contentNegotiation');
 
+// Canonical HTMLTrust v1 directory surface. POST requests use the exact
+// RFC 9421 profile and never fall back to a shared API key.
+const { requireActorSignature } = require('./middleware/httpSignature');
+const {
+  getContentRecordV1,
+  listContentEndorsements,
+  submitContentV1,
+} = require('./controllers/contentController');
+const {
+  createEndorsement,
+  listEndorsements,
+  deleteEndorsement,
+} = require('./controllers/endorsementController');
+const {
+  getKeyDocument,
+  getSignerReputation,
+} = require('./controllers/directoryController');
+
+app.post(
+  '/content',
+  writeLimiter,
+  negotiate('application/htmltrust-content+json', { cacheControl: 'no-store', requestBody: true }),
+  requireActorSignature({ strictV1: true }),
+  submitContentV1,
+);
+app.get(
+  '/content/:contentHash/endorsements',
+  negotiate('application/htmltrust-endorsement+json'),
+  listContentEndorsements,
+);
+app.get(
+  '/content/:contentHash',
+  negotiate('application/htmltrust-content+json'),
+  getContentRecordV1,
+);
+app.get(
+  '/endorsements',
+  negotiate('application/htmltrust-endorsement+json'),
+  listEndorsements,
+);
+app.post(
+  '/endorsements',
+  writeLimiter,
+  negotiate('application/htmltrust-endorsement+json', { cacheControl: 'no-store', requestBody: true }),
+  requireActorSignature({ strictV1: true }),
+  createEndorsement,
+);
+app.delete(
+  '/endorsements/:id',
+  requireActorSignature({ fallback: (req, res, next) => next() }),
+  deleteEndorsement,
+);
+app.get('/keys/:id', negotiate('application/htmltrust-key+json'), getKeyDocument);
+app.get(
+  '/signers/:id/reputation',
+  negotiate('application/json'),
+  getSignerReputation,
+);
+
+// Explicit pre-v1 compatibility surface used by the demo UI and the original
+// conformance runner. These routes retain their documented API-key fallback.
 app.use('/api/authors', authLimiter, require('./routes/authors'));
 app.use('/api/content', writeLimiter, require('./routes/content'));
 app.use('/api/claims', require('./routes/claims'));
@@ -123,8 +189,16 @@ app.use('/api/keys', require('./routes/keys'));
 app.use('/api/signers', require('./routes/signers'));
 
 const { discovery } = require('./controllers/directoryController');
-app.get('/.well-known/htmltrust', discovery);
-app.get('/api/.well-known/htmltrust', discovery);
+app.get(
+  '/.well-known/htmltrust',
+  negotiate('application/htmltrust-directory+json', { cacheControl: 'public, max-age=3600, must-revalidate' }),
+  discovery,
+);
+app.get(
+  '/api/.well-known/htmltrust',
+  negotiate('application/htmltrust-directory+json', { cacheControl: 'public, max-age=3600, must-revalidate' }),
+  discovery,
+);
 
 app.use(express.static(path.join(__dirname, 'public')));
 

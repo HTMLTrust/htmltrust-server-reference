@@ -4,18 +4,22 @@ info:
   description: |
     Reference implementation of the HTMLTrust trust directory API. Provides endpoints
     for author management, content signing and verification, claims, and a federated
-    trust directory with reputation tracking.
+    trust directory with reputation tracking. The canonical v1 directory paths
+    use RFC 9421 authentication for writes, negotiate the HTMLTrust JSON media
+    types (with application/json as a compatibility representation), and use
+    standard Cache-Control, ETag, and Vary headers on public reads.
   version: 1.0.0
   contact:
     name: HTMLTrust
     url: https://github.com/HTMLTrust/htmltrust-server-reference
     email: jason@jason-grey.com
+  license:
+    name: PolyForm Noncommercial License 1.0.0
+    url: https://polyformproject.org/licenses/noncommercial/1.0.0/
 
 servers:
-  - url: https://api.contentsigning.example.com/v1
-    description: Production server
-  - url: https://api.staging.contentsigning.example.com/v1
-    description: Staging server
+  - url: /
+    description: Same origin as the API document
 
 tags:
   - name: Authors
@@ -43,9 +47,17 @@ security:
 
 components:
   securitySchemes:
+    HttpSignatureInput:
+      type: apiKey
+      in: header
+      name: Signature-Input
+      description: |
+        RFC 9421 signature metadata. Send this header together with the
+        `Signature` header represented by `HttpMessageSignature`.
     HttpMessageSignature:
-      type: http
-      scheme: signature
+      type: apiKey
+      in: header
+      name: Signature
       description: |
         RFC 9421 HTTP Message Signature, the scheme draft §9.8 REQUIRES for
         POST endpoints: "POST endpoints MUST be authenticated using HTTP
@@ -55,7 +67,7 @@ components:
         The request carries `Signature-Input` and `Signature` header fields.
         The covered components MUST include the request target (`@method`
         together with `@target-uri`, or `@request-target`), `host`, `date`,
-        and — for any request with a body — `content-digest` (RFC 9530). The
+        and, for any request with a body, `content-digest` (RFC 9530). The
         `keyid` signature parameter is resolved per draft §8 (DID, HTTPS key
         document, or a directory `/keys/{id}` reference) and the signature is
         verified against that key, so the authenticated identity is the key
@@ -64,7 +76,7 @@ components:
         Example:
 
           Signature-Input: sig1=("@method" "@target-uri" "host" "date" \
-            "content-digest");created=1770000000;keyid="https://directory.example/api/keys/k-abc123"
+            "content-digest");created=1770000000;keyid="https://directory.example/keys/k-abc123";alg="ed25519"
           Signature: sig1=:MEUCIQD...:
 
         Failed verification returns 401 with a
@@ -88,8 +100,8 @@ components:
       description: |
         Supplementary demo/admin scheme for submission endpoints. A shared
         secret proves nothing about who submitted a record, so it cannot carry
-        the submitter identity the protocol depends on; prefer
-        HttpMessageSignature. Refused when NODE_ENV=production unless
+        the submitter identity the protocol depends on; prefer the paired
+        HttpSignatureInput and HttpMessageSignature schemes. Refused when NODE_ENV=production unless
         HTMLTRUST_ALLOW_API_KEY_AUTH=1 is set.
 
     AdminApiKey:
@@ -238,7 +250,7 @@ components:
 
     DirectoryDiscovery:
       type: object
-      required: [directory, version, capabilities, supportedAlgorithms]
+      required: [directory, version, capabilities, supportedAlgorithms, supportedProfiles]
       properties:
         directory:
           type: string
@@ -262,10 +274,13 @@ components:
             hash:
               type: array
               items: { type: string }
+        supportedProfiles:
+          type: array
+          items: { type: string }
 
     KeyDocument:
       type: object
-      required: [algorithm, publicKey]
+      required: [algorithm, publicKey, publicKeyEncoding]
       properties:
         kid:
           type: string
@@ -276,6 +291,7 @@ components:
           type: string
           description: Canonical unpadded standard Base64 SPKI DER public key bytes.
         publicKeyEncoding:
+          enum: [spki-der]
           type: string
           description: Reference-server extension describing how publicKey was derived from the stored PEM.
         publicKeyPem:
@@ -301,21 +317,66 @@ components:
           type: array
           items:
             type: object
-            required: [keyid, signedAt, domain, signature]
+            required: [profile, keyid, algorithm, signedAt, scope, location, signature]
             properties:
+              profile:
+                type: string
               keyid:
+                type: string
+              algorithm:
                 type: string
               signedAt:
                 type: string
                 format: date-time
-              domain:
+              scope:
                 type: string
-                description: Serialized Web origin, not a bare hostname.
+                enum: [url, origin]
+              location:
+                type: string
+                format: uri
               signature:
                 type: string
                 description: Canonical unpadded standard Base64 signature.
         endorsementCount:
           type: integer
+
+    ContentSubmission:
+      type: object
+      required: [profile, contentHash, keyid, algorithm, signedAt, scope, location, signature, sourceURL, claims]
+      properties:
+        profile:
+          type: string
+          enum: [htmltrust-signature-v1]
+        contentHash:
+          type: string
+        keyid:
+          type: string
+        algorithm:
+          type: string
+          enum: [ed25519, ecdsa-p256, ecdsa-p384, rsa-pss-sha256, rsa-pkcs1-sha256]
+        signedAt:
+          type: string
+          format: date-time
+        scope:
+          type: string
+          enum: [url, origin]
+        location:
+          type: string
+          format: uri
+        signature:
+          type: string
+          description: Canonical unpadded standard Base64 signature.
+        sourceURL:
+          type: string
+          format: uri
+        claims:
+          type: array
+          items:
+            type: object
+            required: [name, content]
+            properties:
+              name: { type: string }
+              content: { type: string }
 
     SignerReputation:
       type: object
@@ -399,7 +460,7 @@ components:
           description: UTC RFC3339 timestamp from the direct child signed-at claim
         domain:
           type: string
-          description: Serialized Web origin associated with the content, not a bare hostname
+          description: Serialized Web origin associated with the content; bare hostnames are invalid
         authorId:
           type: string
           format: uuid
@@ -427,7 +488,7 @@ components:
         signedAt: "2026-05-01T10:30:00Z"
         domain: "https://example.com"
         authorId: "123e4567-e89b-12d3-a456-426614174000"
-        keyid: "https://directory.example/api/keys/123e4567-e89b-12d3-a456-426614174001"
+        keyid: "https://directory.example/keys/123e4567-e89b-12d3-a456-426614174001"
         algorithm: "ed25519"
         signature: "MEUCIQD7y5SxmQJ9f0lE9B0BwqIJKKdL5fZMNQOiPnKWUJfmrgIgEbHtPwDxM9xGbCZzW9k2R9jFxwJZQQlPfhgj+0YP7vQ="
         claims:
@@ -514,8 +575,8 @@ components:
 
         The directory verifies the endorser's signature over
         JCS(document minus `signature`) before storing it (§9.7), and serves
-        the document back byte-for-byte as submitted. It adds no members of
-        its own: §10.1 requires unrecognised members to be preserved and
+        every submitted member without adding fields of its own. Section 10.1
+        requires unrecognised members to be preserved and
         included in the signed payload, so an injected `_id`, `createdAt`, or
         `contentHash` alias would invalidate the endorser's signature for
         anyone who recomputes it. The server-assigned identifier is returned
@@ -544,7 +605,6 @@ components:
         algorithm:
           type: string
           description: Signature algorithm identifier from draft §7.1
-          default: ed25519
         claim:
           type: string
           description: Free-text human-readable rationale for the endorsement
@@ -578,6 +638,13 @@ paths:
       responses:
         "200":
           description: Directory discovery document
+          headers:
+            Cache-Control:
+              schema: { type: string }
+            ETag:
+              schema: { type: string }
+            Vary:
+              schema: { type: string }
           content:
             application/htmltrust-directory+json:
               schema:
@@ -585,6 +652,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DirectoryDiscovery"
+        "406":
+          description: Requested representation is not supported
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
 
   /keys/{id}:
     get:
@@ -601,6 +674,13 @@ paths:
       responses:
         "200":
           description: Key document
+          headers:
+            Cache-Control:
+              schema: { type: string }
+            ETag:
+              schema: { type: string }
+            Vary:
+              schema: { type: string }
           content:
             application/htmltrust-key+json:
               schema:
@@ -613,7 +693,25 @@ paths:
           content:
             application/problem+json:
               schema:
-                $ref: "#/components/schemas/Error"
+                $ref: "#/components/schemas/Problem"
+        "400":
+          description: Invalid key identifier
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "406":
+          description: Requested representation is not supported
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: Directory could not read the key document
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
 
   /signers/{id}/reputation:
     get:
@@ -631,6 +729,13 @@ paths:
       responses:
         "200":
           description: Signer reputation
+          headers:
+            Cache-Control:
+              schema: { type: string }
+            ETag:
+              schema: { type: string }
+            Vary:
+              schema: { type: string }
           content:
             application/json:
               schema:
@@ -640,7 +745,25 @@ paths:
           content:
             application/problem+json:
               schema:
-                $ref: "#/components/schemas/Error"
+                $ref: "#/components/schemas/Problem"
+        "400":
+          description: Invalid signer identifier
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "406":
+          description: Requested representation is not supported
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: Directory could not read signer reputation
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
 
   /content:
     post:
@@ -648,54 +771,32 @@ paths:
         - Content
       summary: Submit a signed content occurrence for indexing
       description: |
-        Draft directory submission endpoint. The directory re-verifies the
-        submitted signature over `contentHash:claimsHash:domain:signedAt`.
-        `domain` is a serialized Web origin. `claimsHash` may be supplied by
-        clients that already computed the canonical direct-child meta claims
-        hash; otherwise the directory derives it from the submitted `claims`
-        array using the draft §4.6 canonical claims serialization (normalized
-        name/content pairs, sorted by the UTF-8 bytes of the normalized name).
+        Canonical HTMLTrust v1 directory submission endpoint. The directory
+        recomputes the claims hash from the complete `claims` array and
+        re-verifies the v1 JCS signing payload. `location` must be derived
+        from `sourceURL` according to `scope`; callers cannot submit a
+        precomputed `claimsHash`.
       operationId: submitContent
       security:
-        - HttpMessageSignature: []
-        - GeneralApiKey: []
+        - HttpSignatureInput: []
+          HttpMessageSignature: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [contentHash, keyid, signedAt, domain, signature, sourceURL]
-              properties:
-                contentHash:
-                  type: string
-                claimsHash:
-                  type: string
-                keyid:
-                  type: string
-                signedAt:
-                  type: string
-                  format: date-time
-                domain:
-                  type: string
-                  description: Serialized Web origin, not a bare hostname.
-                signature:
-                  type: string
-                  description: Canonical unpadded standard Base64 signature.
-                sourceURL:
-                  type: string
-                  format: uri
-                claims:
-                  type: array
-                  items:
-                    type: object
-                    required: [name, content]
-                    properties:
-                      name: { type: string }
-                      content: { type: string }
+              $ref: "#/components/schemas/ContentSubmission"
+          application/htmltrust-content+json:
+            schema:
+              $ref: "#/components/schemas/ContentSubmission"
       responses:
         "201":
           description: Content record created
+          headers:
+            Cache-Control:
+              schema: { type: string }
+            Location:
+              schema: { type: string }
           content:
             application/htmltrust-content+json:
               schema:
@@ -708,7 +809,31 @@ paths:
           content:
             application/problem+json:
               schema:
-                $ref: "#/components/schemas/Error"
+                $ref: "#/components/schemas/Problem"
+        "401":
+          description: Missing or invalid HTTP Message Signature
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "406":
+          description: Requested representation is not supported
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "415":
+          description: Request body media type is not supported
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: Verified content could not be stored
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
 
   /content/{hash}:
     get:
@@ -726,6 +851,13 @@ paths:
       responses:
         "200":
           description: Content record
+          headers:
+            Cache-Control:
+              schema: { type: string }
+            ETag:
+              schema: { type: string }
+            Vary:
+              schema: { type: string }
           content:
             application/htmltrust-content+json:
               schema:
@@ -738,7 +870,25 @@ paths:
           content:
             application/problem+json:
               schema:
-                $ref: "#/components/schemas/Error"
+                $ref: "#/components/schemas/Problem"
+        "400":
+          description: Invalid content hash
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "406":
+          description: Requested representation is not supported
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: Directory could not read the content record
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
 
   /content/{hash}/endorsements:
     get:
@@ -756,6 +906,13 @@ paths:
       responses:
         "200":
           description: Structured endorsement documents
+          headers:
+            Cache-Control:
+              schema: { type: string }
+            ETag:
+              schema: { type: string }
+            Vary:
+              schema: { type: string }
           content:
             application/htmltrust-endorsement+json:
               schema:
@@ -767,6 +924,24 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Endorsement"
+        "400":
+          description: Invalid content hash
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "406":
+          description: Requested representation is not supported
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: Directory could not read endorsements
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
 
   /authors:
     post:
@@ -835,9 +1010,9 @@ paths:
         "400":
           description: Invalid input
           content:
-            application/json:
+            application/problem+json:
               schema:
-                $ref: "#/components/schemas/Error"
+                $ref: "#/components/schemas/Problem"
         "401":
           description: Unauthorized
           content:
@@ -1103,7 +1278,7 @@ paths:
                   description: Hash of all direct child meta claims using canonical unpadded standard Base64
                 domain:
                   type: string
-                  description: Serialized Web origin associated with the content, not a bare hostname
+                  description: Serialized Web origin associated with the content; bare hostnames are invalid
                 signedAt:
                   type: string
                   format: date-time
@@ -1167,7 +1342,7 @@ paths:
                   description: Hash of all direct child meta claims
                 domain:
                   type: string
-                  description: Serialized Web origin associated with the content, not a bare hostname
+                  description: Serialized Web origin associated with the content; bare hostnames are invalid
                 signedAt:
                   type: string
                   format: date-time
@@ -1297,6 +1472,12 @@ paths:
                         type: integer
                       limit:
                         type: integer
+        "429":
+          description: Request rate limit exceeded
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
 
   /claims/{claimId}:
     get:
@@ -1403,6 +1584,12 @@ paths:
                         type: integer
                       limit:
                         type: integer
+        "429":
+          description: Request rate limit exceeded
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
 
   /directory/keys/{keyId}/reputation:
     get:
@@ -1577,6 +1764,12 @@ paths:
                         type: integer
                       limit:
                         type: integer
+        "429":
+          description: Request rate limit exceeded
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
 
   /directory/content/{contentHash}/occurrences:
     get:
@@ -1736,7 +1929,19 @@ paths:
       responses:
         "200":
           description: Array of endorsements
+          headers:
+            Cache-Control:
+              schema: { type: string }
+            ETag:
+              schema: { type: string }
+            Vary:
+              schema: { type: string }
           content:
+            application/htmltrust-endorsement+json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Endorsement"
             application/json:
               schema:
                 type: array
@@ -1745,9 +1950,21 @@ paths:
         "400":
           description: Invalid input
           content:
-            application/json:
+            application/problem+json:
               schema:
-                $ref: "#/components/schemas/Error"
+                $ref: "#/components/schemas/Problem"
+        "406":
+          description: Requested representation is not supported
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: Directory could not read endorsements
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
     post:
       tags:
         - Endorsements
@@ -1755,70 +1972,67 @@ paths:
       description: |
         Stores a structured endorsement document. The signed payload is the
         JSON canonicalization of the endorsement document with `signature`
-        omitted. The legacy `contentHash` field is accepted as an alias for
-        the draft `endorsement` field.
+        omitted. The canonical endpoint requires RFC 9421 authentication;
+        the `/api/endorsements` compatibility route also accepts the legacy
+        API-key scheme.
       operationId: createEndorsement
       security:
-        - HttpMessageSignature: []
-        - GeneralApiKey: []
+        - HttpSignatureInput: []
+          HttpMessageSignature: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required:
-                - endorser
-                - endorsement
-                - algorithm
-                - signature
-                - timestamp
-              properties:
-                endorser:
-                  type: string
-                  description: Opaque endorser keyid (e.g. "did:web:publisher.org")
-                endorsement:
-                  type: string
-                  description: Draft field for the targeted content hash (e.g. "sha256:...")
-                contentHash:
-                  type: string
-                  description: Legacy alias for endorsement
-                signature:
-                  type: string
-                  description: Canonical unpadded standard Base64 signature over JCS(document with signature omitted)
-                timestamp:
-                  type: string
-                  description: ISO-8601 timestamp at which the endorsement was issued
-                algorithm:
-                  type: string
-                  description: Signature algorithm (default ed25519)
-                  default: ed25519
-                rawBlob:
-                  type: string
-                  description: |
-                    The exact bytes the client signed over. Clients SHOULD
-                    supply this so verifiers can re-verify byte-identically.
-                    If omitted, the server constructs a canonical blob in a
-                    stable key order.
+              $ref: "#/components/schemas/Endorsement"
+          application/htmltrust-endorsement+json:
+            schema:
+              $ref: "#/components/schemas/Endorsement"
       responses:
         "201":
           description: Endorsement stored
+          headers:
+            Cache-Control:
+              schema: { type: string }
+            Location:
+              schema: { type: string }
           content:
+            application/htmltrust-endorsement+json:
+              schema:
+                $ref: "#/components/schemas/Endorsement"
             application/json:
               schema:
                 $ref: "#/components/schemas/Endorsement"
         "400":
           description: Invalid input
           content:
-            application/json:
+            application/problem+json:
               schema:
-                $ref: "#/components/schemas/Error"
+                $ref: "#/components/schemas/Problem"
         "401":
           description: Unauthorized
           content:
-            application/json:
+            application/problem+json:
               schema:
-                $ref: "#/components/schemas/Error"
+                $ref: "#/components/schemas/Problem"
+        "406":
+          description: Requested representation is not supported
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "415":
+          description: Request body media type is not supported
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: Verified endorsement could not be stored
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
 
   /endorsements/{id}:
     delete:
@@ -1826,13 +2040,12 @@ paths:
         - Endorsements
       summary: Delete an endorsement
       description: |
-        Removes an endorsement from the directory. MVP: gated behind the
-        general API key only. Production deployments MUST additionally
-        require that the caller's authenticated identity match the
-        endorsement's `endorser` keyid.
+        Removes an endorsement from the directory. The caller must authenticate
+        with the endorsement's key or with the directory administrator key.
       operationId: deleteEndorsement
       security:
-        - HttpMessageSignature: []
+        - HttpSignatureInput: []
+          HttpMessageSignature: []
         - AdminApiKey: []
       parameters:
         - name: id
@@ -1843,15 +2056,33 @@ paths:
       responses:
         "204":
           description: Endorsement deleted
+        "400":
+          description: Invalid endorsement identifier or request
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
         "401":
           description: Unauthorized
           content:
-            application/json:
+            application/problem+json:
               schema:
-                $ref: "#/components/schemas/Error"
+                $ref: "#/components/schemas/Problem"
+        "403":
+          description: The authenticated key is not the endorser
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
         "404":
           description: Endorsement not found
           content:
-            application/json:
+            application/problem+json:
               schema:
-                $ref: "#/components/schemas/Error"
+                $ref: "#/components/schemas/Problem"
+        "500":
+          description: Directory could not delete the endorsement
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
