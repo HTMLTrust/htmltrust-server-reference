@@ -391,6 +391,14 @@ components:
           type: number
           minimum: 0
           maximum: 1
+        reports:
+          type: integer
+          minimum: 0
+          description: Number of reports held by this directory for the signer.
+        verifiedSignatures:
+          type: integer
+          minimum: 0
+          description: Number of signatures this directory has verified for the signer.
         asOf:
           type: string
           format: date-time
@@ -400,6 +408,34 @@ components:
         methodology:
           type: string
           format: uri
+
+    SignerVoteResult:
+      type: object
+      required: [voteId, voterId, signerId, voteType]
+      properties:
+        voteId: { type: string }
+        voterId: { type: string }
+        signerId: { type: string, maxLength: 2048 }
+        voteType:
+          type: string
+          enum: [TRUST, DISTRUST]
+        previousVoteType:
+          type: [string, "null"]
+          enum: [TRUST, DISTRUST, null]
+        updatedAt:
+          type: string
+          format: date-time
+
+    SignerReportResult:
+      type: object
+      required: [reportId, status]
+      properties:
+        reportId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [PENDING, UNDER_REVIEW, ACCEPTED, REJECTED]
 
     Claim:
       type: object
@@ -1740,12 +1776,21 @@ paths:
           schema:
             type: string
             pattern: "^(k_[A-Za-z0-9_-]{20,64}|[0-9A-Fa-f]{24})$"
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Reuse the same visible ASCII value when retrying one report.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required:
                 - reason
               properties:
@@ -1755,10 +1800,12 @@ paths:
                   description: Reason for reporting
                 details:
                   type: string
+                  maxLength: 4096
                   description: Additional details about the report
                 evidence:
                   type: string
                   format: uri
+                  maxLength: 2048
                   description: URL to evidence supporting the report
       responses:
         "201":
@@ -1766,15 +1813,13 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  reportId:
-                    type: string
-                    format: uuid
-                  status:
-                    type: string
-                    enum: [PENDING, UNDER_REVIEW, ACCEPTED, REJECTED]
-                    default: PENDING
+                $ref: "#/components/schemas/SignerReportResult"
+        "200":
+          description: A retry with the same idempotency key returned the existing report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignerReportResult"
         "400":
           description: Invalid input
           content:
@@ -1793,6 +1838,122 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+
+  /api/directory/signer-reports:
+    post:
+      tags:
+        - Directory
+      summary: Report a signer by exact keyid
+      description: Records this directory's opinion about a signer that may be published by another directory.
+      operationId: reportSigner
+      security:
+        - GeneralApiKey: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Reuse the same visible ASCII value when retrying one report.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [signerId, reason]
+              properties:
+                signerId:
+                  type: string
+                  maxLength: 2048
+                  description: Exact signer keyid, including a foreign directory URL when applicable.
+                reason:
+                  type: string
+                  enum: [IMPERSONATION, MISINFORMATION, SPAM, OTHER]
+                details:
+                  type: string
+                  maxLength: 4096
+                evidence:
+                  type: string
+                  format: uri
+                  maxLength: 2048
+      responses:
+        "201":
+          description: Report submitted successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignerReportResult"
+        "200":
+          description: A retry with the same idempotency key returned the existing report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignerReportResult"
+        "400":
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Unauthorized
+
+  /api/directory/signer-votes:
+    post:
+      tags:
+        - Directory
+      summary: Record an authenticated opinion about a signer
+      description: Stores one current vote per authenticated voter and exact signer keyid.
+      operationId: submitSignerVote
+      security:
+        - HttpSignatureInput: []
+          HttpMessageSignature: []
+        - GeneralApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [signerId, voteType]
+              properties:
+                signerId:
+                  type: string
+                  minLength: 1
+                  maxLength: 2048
+                  description: Exact signer keyid, including a foreign directory URL when applicable.
+                voteType:
+                  type: string
+                  enum: [TRUST, DISTRUST]
+                reason:
+                  type: string
+                  maxLength: 4096
+      responses:
+        "201":
+          description: First vote recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignerVoteResult"
+        "200":
+          description: Existing vote updated or repeated idempotently
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignerVoteResult"
+        "400":
+          description: Invalid signer identifier, vote type, or reason
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "401":
+          description: Authentication required
 
   /api/directory/content:
     get:

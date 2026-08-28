@@ -18,6 +18,10 @@ const crypto = require('crypto');
 const ContentSignature = require('../src/models/ContentSignature');
 const Endorsement = require('../src/models/Endorsement');
 const Key = require('../src/models/Key');
+const SignerReport = require('../src/models/SignerReport');
+const SignerVote = require('../src/models/SignerVote');
+
+const CURRENT_INDEX_MODELS = [Key, ContentSignature, Endorsement, SignerVote, SignerReport];
 
 const LEGACY_INDEXES = [
   [ContentSignature, 'contentHash_1_domain_1_authorId_1'],
@@ -74,9 +78,9 @@ const migrate = async () => {
     }
     // Recreate the current partial/non-unique definitions without touching
     // unrelated indexes owned by an operator or another application.
-    await Key.createIndexes();
-    await ContentSignature.createIndexes();
-    await Endorsement.createIndexes();
+    for (const model of CURRENT_INDEX_MODELS) {
+      await model.createIndexes();
+    }
     console.log('v1 index migration complete');
   } finally {
     await mongoose.disconnect();
@@ -90,4 +94,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { LEGACY_INDEXES, backfillPublicIds, dropIfPresent, migrate };
+module.exports = { CURRENT_INDEX_MODELS, LEGACY_INDEXES, backfillPublicIds, dropIfPresent, migrate };
