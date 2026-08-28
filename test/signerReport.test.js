@@ -153,6 +153,10 @@ test('the compatibility key report route returns 404 for an unknown local key', 
   const result = response();
   await reportSigner(request({ keyId: 'k_unknown_12345678901234567890' }), result);
   assert.equal(result.code, 404);
+  assert.deepEqual(result.body, {
+    code: 'NOT_FOUND',
+    message: 'No local key exists for the requested id',
+  });
   assert.equal(reports.size, 0);
 });
 
@@ -165,6 +169,8 @@ test('the compatibility key route rejects a misleading body signer id', async (t
   const result = response();
   await reportSigner(req, result);
   assert.equal(result.code, 400);
+  assert.equal(result.body.code, 'BAD_REQUEST');
+  assert.equal(typeof result.body.message, 'string');
   assert.equal(reports.size, 0);
 });
 

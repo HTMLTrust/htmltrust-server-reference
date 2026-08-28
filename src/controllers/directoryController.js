@@ -96,6 +96,14 @@ const reportActorIdentity = (req) => {
   return 'shared-api-key';
 };
 
+const signerReportError = (req, res, status, title, detail, options) => {
+  if (req.params.keyId) {
+    const code = status === 404 ? 'NOT_FOUND' : status === 500 ? 'SERVER_ERROR' : 'BAD_REQUEST';
+    return res.status(status).json({ code, message: detail });
+  }
+  return problem(res, status, title, detail, options);
+};
+
 exports.discovery = async (req, res) => {
   res
     .type(negotiatedType(req, 'application/htmltrust-directory+json'))
@@ -337,45 +345,45 @@ exports.reportSigner = async (req, res) => {
       (field) => !['signerId', 'reason', 'details', 'evidence'].includes(field),
     );
     if (unknownFields.length > 0) {
-      return problem(res, 400, 'Invalid request body', 'Only signerId, reason, details, and evidence are accepted');
+      return signerReportError(req, res, 400, 'Invalid request body', 'Only signerId, reason, details, and evidence are accepted');
     }
     const { reason, details, evidence } = body;
     if (req.params.keyId && Object.hasOwn(body, 'signerId')) {
-      return problem(res, 400, 'Invalid request body', 'The key report route takes its signer id from the path');
+      return signerReportError(req, res, 400, 'Invalid request body', 'The key report route takes its signer id from the path');
     }
     const requestedSignerId = req.params.keyId || body.signerId;
     if (typeof requestedSignerId !== 'string' || !requestedSignerId || requestedSignerId.trim() !== requestedSignerId) {
-      return problem(res, 400, 'Invalid signer id', 'signerId is required');
+      return signerReportError(req, res, 400, 'Invalid signer id', 'signerId is required');
     }
     if (requestedSignerId.length > 2048 || /[\u0000-\u001f\u007f]/.test(requestedSignerId)) {
-      return problem(res, 400, 'Invalid signer id', 'The signer id must be between 1 and 2048 characters without controls');
+      return signerReportError(req, res, 400, 'Invalid signer id', 'The signer id must be between 1 and 2048 characters without controls');
     }
     if (!['IMPERSONATION', 'MISINFORMATION', 'SPAM', 'OTHER'].includes(reason)) {
-      return problem(res, 400, 'Invalid report reason', 'reason must be IMPERSONATION, MISINFORMATION, SPAM, or OTHER');
+      return signerReportError(req, res, 400, 'Invalid report reason', 'reason must be IMPERSONATION, MISINFORMATION, SPAM, or OTHER');
     }
     if (details !== undefined && (typeof details !== 'string' || details.length > 4096)) {
-      return problem(res, 400, 'Invalid report details', 'details must be a string of at most 4096 characters');
+      return signerReportError(req, res, 400, 'Invalid report details', 'details must be a string of at most 4096 characters');
     }
     if (evidence !== undefined) {
       if (typeof evidence !== 'string' || evidence.length > 2048) {
-        return problem(res, 400, 'Invalid report evidence', 'evidence must be an HTTP or HTTPS URL of at most 2048 characters');
+        return signerReportError(req, res, 400, 'Invalid report evidence', 'evidence must be an HTTP or HTTPS URL of at most 2048 characters');
       }
       try {
         const evidenceUrl = new URL(evidence);
         if (!['http:', 'https:'].includes(evidenceUrl.protocol)) throw new Error('protocol');
       } catch {
-        return problem(res, 400, 'Invalid report evidence', 'evidence must be an HTTP or HTTPS URL of at most 2048 characters');
+        return signerReportError(req, res, 400, 'Invalid report evidence', 'evidence must be an HTTP or HTTPS URL of at most 2048 characters');
       }
     }
 
     const localKey = await findLocalSignerKey(req, requestedSignerId);
     if (req.params.keyId && !localKey) {
-      return problem(res, 404, 'Key not found', 'No local key exists for the requested id');
+      return signerReportError(req, res, 404, 'Key not found', 'No local key exists for the requested id');
     }
     const signerId = localKey ? directoryKeyUrl(req, publicKeyId(localKey)) : requestedSignerId;
     const suppliedRequestKey = req.get('Idempotency-Key');
     if (suppliedRequestKey !== undefined && !/^[\x21-\x7e]{1,128}$/.test(suppliedRequestKey)) {
-      return problem(res, 400, 'Invalid idempotency key', 'Idempotency-Key must contain 1 to 128 visible ASCII characters');
+      return signerReportError(req, res, 400, 'Invalid idempotency key', 'Idempotency-Key must contain 1 to 128 visible ASCII characters');
     }
     const reporterId = reportActorIdentity(req);
     const requestKey = suppliedRequestKey || crypto.randomUUID();
@@ -407,7 +415,7 @@ exports.reportSigner = async (req, res) => {
     });
   } catch (error) {
     console.error('Report key error:', error);
-    return problem(res, 500, 'Directory write failure', 'The directory could not store the signer report', {
+    return signerReportError(req, res, 500, 'Directory write failure', 'The directory could not store the signer report', {
       type: 'https://htmltrust.org/errors/storage-failure',
     });
   }
