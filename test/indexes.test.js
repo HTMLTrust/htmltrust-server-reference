@@ -2,7 +2,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const ContentSignature = require('../src/models/ContentSignature');
 const Endorsement = require('../src/models/Endorsement');
-const { LEGACY_INDEXES } = require('../scripts/migrate-v1-indexes');
+const SignerReport = require('../src/models/SignerReport');
+const SignerVote = require('../src/models/SignerVote');
+const { CURRENT_INDEX_MODELS, LEGACY_INDEXES } = require('../scripts/migrate-v1-indexes');
 
 test('v1 content identity uses a partial unique index', () => {
   const index = ContentSignature.schema.indexes().find(([keys]) =>
@@ -13,6 +15,13 @@ test('v1 content identity uses a partial unique index', () => {
   const legacy = ContentSignature.schema.indexes().find(([keys]) =>
     keys.contentHash === 1 && keys.domain === 1 && keys.authorId === 1);
   assert.deepEqual(legacy[1].partialFilterExpression.profile, { $in: [null] });
+});
+
+test('signer opinion indexes support public reads and the production migration', () => {
+  for (const model of [SignerVote, SignerReport]) {
+    assert.ok(model.schema.indexes().some(([keys]) => keys.signerId === 1 && Object.keys(keys).length === 1));
+    assert.ok(CURRENT_INDEX_MODELS.includes(model));
+  }
 });
 
 test('pre-v1 index names are covered by the explicit migration', () => {

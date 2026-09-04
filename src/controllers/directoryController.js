@@ -1,7 +1,11 @@
+const crypto = require('crypto');
 const Key = require('../models/Key');
 const Author = require('../models/Author');
 const ContentSignature = require('../models/ContentSignature');
 const ContentOccurrence = require('../models/ContentOccurrence');
+const SignerReputation = require('../models/SignerReputation');
+const SignerReport = require('../models/SignerReport');
+const { applySignerOpinion, signerOpinion } = require('../services/signerOpinion');
 const {
   detailFor,
   keyDocumentFor,
@@ -70,6 +74,36 @@ const findDirectoryKey = async (value) => {
   return Key.findOne({ publicId: id });
 };
 
+/** Resolve only a signer identifier that belongs to this directory. */
+const findLocalSignerKey = async (req, signerId) => {
+  if (OPAQUE_KEY_ID.test(signerId) || MONGO_KEY_ID.test(signerId)) {
+    const direct = await findDirectoryKey(signerId);
+    if (direct) return direct;
+    if (MONGO_KEY_ID.test(signerId)) return Key.findOne({ authorId: signerId });
+    return null;
+  }
+
+  const keyId = keyIdFromSignerId(signerId);
+  if (!keyId) return null;
+  const key = await findDirectoryKey(keyId);
+  if (!key) return null;
+  return directoryKeyUrl(req, publicKeyId(key)) === signerId ? key : null;
+};
+
+const reportActorIdentity = (req) => {
+  if (req.htmltrustActor?.keyid) return `key:${req.htmltrustActor.keyid}`;
+  if (req.author?._id) return `author:${req.author._id}`;
+  return 'shared-api-key';
+};
+
+const signerReportError = (req, res, status, title, detail, options) => {
+  if (req.params.keyId) {
+    const code = status === 404 ? 'NOT_FOUND' : status === 500 ? 'SERVER_ERROR' : 'BAD_REQUEST';
+    return res.status(status).json({ code, message: detail });
+  }
+  return problem(res, status, title, detail, options);
+};
+
 exports.discovery = async (req, res) => {
   res
     .type(negotiatedType(req, 'application/htmltrust-directory+json'))
@@ -121,36 +155,33 @@ exports.getKeyDocument = async (req, res) => {
 };
 
 exports.getSignerReputation = async (req, res) => {
-  let signerId;
-  try {
-    signerId = decodeURIComponent(req.params.id);
-  } catch (error) {
-    return problem(res, 400, 'Invalid signer id', 'The signer id is not valid percent-encoding');
-  }
+  // Express has already decoded the route parameter exactly once. Decoding
+  // it again would change a legitimate `%2F` sequence inside the keyid.
+  const signerId = req.params.id;
 
   try {
-    const keyId = keyIdFromSignerId(signerId);
-    let key = null;
-    if (keyId) {
-      key = await findDirectoryKey(keyId);
-    }
-    if (!key && OPAQUE_KEY_ID.test(signerId)) {
-      key = await findDirectoryKey(signerId);
-    }
-    if (!key && /^[0-9a-fA-F]{24}$/.test(signerId)) {
-      key = await Key.findOne({ authorId: signerId });
-    }
-    if (!key) {
-      return problem(res, 404, 'Signer not found', 'No local signer reputation exists for the requested id', {
+    const [key, external] = await Promise.all([
+      findLocalSignerKey(req, signerId),
+      SignerReputation.findOne({ signerId }).lean(),
+    ]);
+    const opinionSignerId = key ? directoryKeyUrl(req, publicKeyId(key)) : signerId;
+    const opinion = await signerOpinion(opinionSignerId);
+    if (!key && !external && opinion.voteCount === 0 && opinion.reportCount === 0) {
+      return problem(res, 404, 'Signer not found', 'No signer reputation exists for the requested id', {
         keyid: signerId,
       });
     }
 
+    const reputation = key || external || { trustScore: 0.5, reports: 0, verifiedSignatures: 0 };
+    const effective = applySignerOpinion(reputation, opinion);
+
     res.status(200).json({
       keyid: signerId,
-      score: key.trustScore,
-      asOf: (key.updatedAt || key.createdAt || new Date()).toISOString(),
-      components: ['verified-signatures', 'reports'],
+      score: effective.score,
+      reports: effective.reports,
+      verifiedSignatures: effective.verifiedSignatures,
+      asOf: (reputation.updatedAt || reputation.createdAt || new Date()).toISOString(),
+      components: ['verified-signatures', 'reports', 'votes'],
       methodology: `${baseDirectoryUrl(req)}methodology/reputation-v1`
     });
   } catch (error) {
@@ -283,11 +314,13 @@ exports.getKeyReputation = async (req, res) => {
       });
     }
     
+    const signerId = directoryKeyUrl(req, publicKeyId(key));
+    const effective = applySignerOpinion(key, await signerOpinion(signerId));
     res.status(200).json({
       keyId: publicKeyId(key),
-      trustScore: key.trustScore,
-      verifiedSignatures: key.verifiedSignatures,
-      reports: key.reports,
+      trustScore: effective.score,
+      verifiedSignatures: effective.verifiedSignatures,
+      reports: effective.reports,
       lastUpdated: key.updatedAt || key.createdAt
     });
   } catch (error) {
@@ -300,47 +333,95 @@ exports.getKeyReputation = async (req, res) => {
 };
 
 /**
- * @desc    Report a key
+ * @desc    Report a signer, including a signer published by another directory
  * @route   POST /api/directory/keys/:keyId/report
+ * @route   POST /api/directory/signer-reports with { signerId }
  * @access  Private (General API Key)
  */
-exports.reportKey = async (req, res) => {
+exports.reportSigner = async (req, res) => {
   try {
-    const { reason, details, evidence } = req.body;
-    
-    // Find key
-    const key = await findDirectoryKey(req.params.keyId);
-    
-    if (!key) {
-      return res.status(404).json({
-        code: 'NOT_FOUND',
-        message: 'Key not found'
-      });
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+    const unknownFields = Object.keys(body).filter(
+      (field) => !['signerId', 'reason', 'details', 'evidence'].includes(field),
+    );
+    if (unknownFields.length > 0) {
+      return signerReportError(req, res, 400, 'Invalid request body', 'Only signerId, reason, details, and evidence are accepted');
     }
-    
-    // Increment reports count
-    key.reports += 1;
-    
-    // Adjust trust score based on reports
-    // This is a simple implementation - in a real system, you would have a more sophisticated algorithm
-    key.trustScore = Math.max(0, key.trustScore - 0.05);
-    
-    await key.save();
-    
-    // In a real implementation, you would store the report details in a separate collection
-    
-    res.status(201).json({
-      reportId: Date.now().toString(), // Placeholder for a real report ID
-      status: 'PENDING'
+    const { reason, details, evidence } = body;
+    if (req.params.keyId && Object.hasOwn(body, 'signerId')) {
+      return signerReportError(req, res, 400, 'Invalid request body', 'The key report route takes its signer id from the path');
+    }
+    const requestedSignerId = req.params.keyId || body.signerId;
+    if (typeof requestedSignerId !== 'string' || !requestedSignerId || requestedSignerId.trim() !== requestedSignerId) {
+      return signerReportError(req, res, 400, 'Invalid signer id', 'signerId is required');
+    }
+    if (requestedSignerId.length > 2048 || /[\u0000-\u001f\u007f]/.test(requestedSignerId)) {
+      return signerReportError(req, res, 400, 'Invalid signer id', 'The signer id must be between 1 and 2048 characters without controls');
+    }
+    if (!['IMPERSONATION', 'MISINFORMATION', 'SPAM', 'OTHER'].includes(reason)) {
+      return signerReportError(req, res, 400, 'Invalid report reason', 'reason must be IMPERSONATION, MISINFORMATION, SPAM, or OTHER');
+    }
+    if (details !== undefined && (typeof details !== 'string' || details.length > 4096)) {
+      return signerReportError(req, res, 400, 'Invalid report details', 'details must be a string of at most 4096 characters');
+    }
+    if (evidence !== undefined) {
+      if (typeof evidence !== 'string' || evidence.length > 2048) {
+        return signerReportError(req, res, 400, 'Invalid report evidence', 'evidence must be an HTTP or HTTPS URL of at most 2048 characters');
+      }
+      try {
+        const evidenceUrl = new URL(evidence);
+        if (!['http:', 'https:'].includes(evidenceUrl.protocol)) throw new Error('protocol');
+      } catch {
+        return signerReportError(req, res, 400, 'Invalid report evidence', 'evidence must be an HTTP or HTTPS URL of at most 2048 characters');
+      }
+    }
+
+    const localKey = await findLocalSignerKey(req, requestedSignerId);
+    if (req.params.keyId && !localKey) {
+      return signerReportError(req, res, 404, 'Key not found', 'No local key exists for the requested id');
+    }
+    const signerId = localKey ? directoryKeyUrl(req, publicKeyId(localKey)) : requestedSignerId;
+    const suppliedRequestKey = req.get('Idempotency-Key');
+    if (suppliedRequestKey !== undefined && !/^[\x21-\x7e]{1,128}$/.test(suppliedRequestKey)) {
+      return signerReportError(req, res, 400, 'Invalid idempotency key', 'Idempotency-Key must contain 1 to 128 visible ASCII characters');
+    }
+    const reporterId = reportActorIdentity(req);
+    const requestKey = suppliedRequestKey || crypto.randomUUID();
+    const filter = { reporterId, signerId, requestKey };
+    let write;
+    try {
+      write = await SignerReport.updateOne(filter, {
+        $setOnInsert: {
+          reportId: crypto.randomUUID(),
+          reporterId,
+          signerId,
+          requestKey,
+          reason,
+          details,
+          evidence,
+          status: 'PENDING',
+        },
+      }, { upsert: true });
+    } catch (error) {
+      if (error?.code !== 11000) throw error;
+      write = { upsertedCount: 0 };
+    }
+    const report = await SignerReport.findOne(filter).lean();
+    if (!report) throw new Error('report could not be stored');
+
+    res.status(write.upsertedCount === 1 ? 201 : 200).json({
+      reportId: report.reportId,
+      status: report.status,
     });
   } catch (error) {
     console.error('Report key error:', error);
-    res.status(400).json({
-      code: 'BAD_REQUEST',
-      message: detailFor(error)
+    return signerReportError(req, res, 500, 'Directory write failure', 'The directory could not store the signer report', {
+      type: 'https://htmltrust.org/errors/storage-failure',
     });
   }
 };
+
+exports.reportKey = exports.reportSigner;
 
 /**
  * @desc    Search signed content

@@ -36,9 +36,24 @@ Set `MONGO_URI` in `.env` to the database used by the server. The default develo
 
 `npm run dev` uses nodemon. Use `npm start` for a regular Node process.
 
+To start the documented MongoDB 7 development dependency with Docker and wait
+until it accepts connections:
+
+```sh
+docker rm -f htmltrust-mongo >/dev/null 2>&1 || true
+docker run -d --name htmltrust-mongo -p 127.0.0.1:27017:27017 mongo:7
+until docker exec htmltrust-mongo mongosh --quiet --eval "db.adminCommand('ping').ok" >/dev/null 2>&1; do sleep 1; done
+MONGO_URI=mongodb://localhost:27017/content-signing npm run dev
+```
+
+Remove that container when finished with `docker rm -f htmltrust-mongo`. The
+repository's `npm run conformance:docker` command performs the same MongoDB 7
+startup and readiness check for a disposable conformance run.
+
 ### Run tests
 
-Unit tests use Node's built-in test runner and require no database:
+Most unit tests use Node's built-in test runner without a database. The signer
+opinion integration tests use `mongodb-memory-server`:
 
 ```sh
 npm test
@@ -52,7 +67,7 @@ npm --prefix conformance/runner ci
 npm run conformance
 ```
 
-The conformance command runs every fixture and the canonical v1 smoke checks. Set `SERVER_PORT` or `MONGO_PORT` when the defaults are occupied. The first run can download a MongoDB binary for `mongodb-memory-server`.
+The conformance command runs every fixture and the canonical v1 smoke checks. Set `SERVER_PORT` or `MONGO_PORT` when the defaults are occupied. The first test or conformance run can download a MongoDB binary for `mongodb-memory-server`; that requires network access. Its cache can be relocated with `MONGOMS_DOWNLOAD_DIR` when a persistent cache is preferred.
 
 ## Test in Docker
 
@@ -63,6 +78,10 @@ The repository script runs unit and conformance tests inside a disposable Node 2
 ```
 
 This is the lowest-dependency test path: it requires Docker and a shell. Set `HTMLTRUST_TEST_IMAGE` to use another compatible Node image. The older `npm run conformance:docker` command remains available for developers who want to run the conformance runner with a host Node process and a Docker MongoDB container.
+
+The end-to-end repository uses Docker Compose, not this server test script. Check
+that Compose v2 is installed with `docker compose version` before running that
+workflow.
 
 ## Deployment
 
@@ -116,13 +135,17 @@ The following routes retain the original `/api` prefix and response shapes:
 | `/api/authors` | Create and list authors; read, update, or delete an author; read its public key |
 | `/api/content` | Sign, verify, submit, and retrieve content; register occurrences; list content endorsements |
 | `/api/claims` | Create, list, read, update, and delete claim types |
-| `/api/directory` | Search keys and content; read key reputation and occurrences; report keys or content |
+| `/api/directory` | Search keys and content; read key reputation and occurrences; report keys, signers, or content; submit signer votes |
 | `/api/endorsements` | List, submit, and delete endorsements |
 | `/api/votes` | Submit votes; list votes; read vote statistics; delete a vote |
 | `/api/keys` and `/api/signers` | Read the compatibility key and signer-reputation documents |
 | `/api/.well-known/htmltrust` | Compatibility alias for the discovery document |
 
 The compatibility routes use the API-key headers described below for their original protected operations. Content and endorsement submission also accept the RFC 9421 flow, while canonical root submissions require that flow. The OpenAPI file defines the long-term v1 resource shapes and media types; this implementation currently keeps author, claim-management, directory-search, reporting, and voting operations under `/api`.
+
+`POST /api/directory/signer-votes` accepts `{ "signerId": "<exact keyid>", "voteType": "TRUST|DISTRUST", "reason": "<optional text>" }`. The signer ID may name a key hosted by another directory. An RFC 9421 signature keys the vote to its resolved `keyid`; the development `X-API-KEY` fallback uses one shared voter identity. A voter can submit one current vote per signer. The first submission returns `201`, and a repeat or vote change returns `200`. Reputation reads derive the current vote contribution from these records.
+
+`POST /api/directory/signer-reports` records a report against an exact local or foreign keyid. Send an `Idempotency-Key` header when a caller may retry the request. A repeat with the same authenticated reporter, signer ID, and idempotency key returns the original report with `200`; a new report returns `201`. Reputation reads derive report counts and score adjustments from stored reports. The original local author/content vote API remains available at `POST /api/votes`.
 
 ### Deprecated route
 
@@ -176,7 +199,10 @@ openapi.yaml                  API contract and response schemas
 ## Related repositories
 
 - [HTMLTrust specification](https://github.com/HTMLTrust/htmltrust-spec)
+- [Canonicalization library](https://github.com/HTMLTrust/htmltrust-canonicalization), pinned to `760593d4a02e9fffa56dc4d002eb52ab2ade1b49` by this package
 - [Browser reference](https://github.com/HTMLTrust/htmltrust-browser-reference)
+- [Browser client](https://github.com/HTMLTrust/htmltrust-browser-client)
+- [End-to-end harness](https://github.com/HTMLTrust/htmltrust-e2e)
 - [CMS reference](https://github.com/HTMLTrust/htmltrust-cms-reference)
 - [Project website](https://github.com/HTMLTrust/htmltrust-website)
 
